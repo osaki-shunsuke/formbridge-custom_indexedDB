@@ -69,7 +69,7 @@
         update(remaining, total) {
             const el = document.getElementById('fb-custom-progress');
             if (el) {
-                el.textContent = \`📷 画像を圧縮中... 残り \${remaining} 枚 / 全 \${total} 枚\`;
+                el.textContent = `📷 画像を圧縮中... 残り ${remaining} 枚 / 全 ${total} 枚`;
             }
         },
         hide() {
@@ -120,9 +120,9 @@
                 const errName = error && error.name;
                 // 容量制限エラーとブラウザ制限のフォールバック対応
                 if (errName === 'QuotaExceededError') {
-                    alert('端末のストレージ容量制限に達したため、バックアップ保存できませんでした。\\n画像の枚数を減らすか、空き容量を確保してください。');
+                    alert('端末のストレージ容量制限に達したため、バックアップ保存できませんでした。\n画像の枚数を減らすか、空き容量を確保してください。');
                 } else if (errName === 'NotAllowedError' || errName === 'SecurityError' || !error) {
-                    alert('ブラウザのプライバシー設定（プライベートブラウズ等）によりバックアップ機能が利用できません。\\n入力データは保護されませんが、送信自体は可能です。');
+                    alert('ブラウザのプライバシー設定（プライベートブラウズ等）によりバックアップ機能が利用できません。\n入力データは保護されませんが、送信自体は可能です。');
                 }
             }
         },
@@ -317,19 +317,19 @@
         const settings = formBridge.fn.getFieldSettings();
         settings.forEach(s => {
             // 通常フィールドおよびルックアップの変更監視
-            formBridge.events.on(\`form.field.change.\${s.code}\`, saveHandler);
-            formBridge.events.on(\`form.kviewerLookup.selectRecord.\${s.code}\`, saveHandler);
+            formBridge.events.on(`form.field.change.${s.code}`, saveHandler);
+            formBridge.events.on(`form.kviewerLookup.selectRecord.${s.code}`, saveHandler);
 
             // サブテーブル固有のイベント監視
             if (s.type === 'SUBTABLE') {
-                formBridge.events.on(\`form.subtable.addRow.\${s.code}\`, saveHandler);
-                formBridge.events.on(\`form.subtable.removeRow.\${s.code}\`, saveHandler);
+                formBridge.events.on(`form.subtable.addRow.${s.code}`, saveHandler);
+                formBridge.events.on(`form.subtable.removeRow.${s.code}`, saveHandler);
                 
                 // サブテーブル内の各フィールドの変更
                 if (s.tableFields) {
                     s.tableFields.forEach(ts => {
-                        formBridge.events.on(\`form.field.change.\${s.code}.\${ts.code}\`, saveHandler);
-                        formBridge.events.on(\`form.kviewerLookup.selectRecord.\${s.code}.\${ts.code}\`, saveHandler);
+                        formBridge.events.on(`form.field.change.${s.code}.${ts.code}`, saveHandler);
+                        formBridge.events.on(`form.kviewerLookup.selectRecord.${s.code}.${ts.code}`, saveHandler);
                     });
                 }
             }
@@ -386,57 +386,5 @@
     };
     formBridge.events.on('form.submitted', clearBackup);
     formBridge.events.on('confirm.submitted', clearBackup);
-
-})();e.target.dataset.processed = 'true';
-
-        // FormBridgeへ変更の完了を伝播
-        e.target.dispatchEvent(new Event('change', { bubbles: true }));
-
-        // ★ IndexedDB バックアップ保存
-        // Reactの再描画後を見計らって保存を行うためのsetTimeout
-        setTimeout(() => {
-            const currentRecord = formBridge.fn.getRecord();
-            // 送信ボタン同期用のPromiseの更新
-            pendingSavePromise = dbOp.save(currentRecord).then(() => {
-                console.log('💾 画像追加に伴い IndexedDB に保存しました');
-                pendingSavePromise = null;
-            });
-        }, 500);
-
-    }, true);
-
-    // テキスト入力の変更も監視して保存
-    formBridge.events.on('form.show', () => {
-        const settings = formBridge.fn.getFieldSettings();
-        settings.forEach(s => {
-            formBridge.events.on(\`form.field.change.\${s.code}\`, () => {
-                const record = formBridge.fn.getRecord();
-                pendingSavePromise = dbOp.save(record).then(() => {
-                    pendingSavePromise = null; // 完了したらリセット
-                });
-            });
-        });
-    });
-
-    // ▼ 送信ボタン（form.submit）との同期処理
-    // 保存が進行中の場合は送信を一度止め、完了後に自動再送信する
-    formBridge.events.on('form.submit', (context) => {
-        if (pendingSavePromise) {
-            console.log('⏳ バックアップ保存中のため、送信を一時待機します...');
-            context.preventDefault();
-
-            // 保存処理完了を待ってから再度送信エミット
-            pendingSavePromise.then(() => {
-                console.log('🔄 保存完了。送信処理を再開します。');
-                formBridge.fn.emitSubmit();
-            });
-        }
-    });
-
-    // ▼ 送信完了時：バックアップの削除
-    formBridge.events.on('form.submitted', async () => {
-        await dbOp.clear();
-        console.log('🗑️ 送信完了のためバックアップを削除しました');
-    });
 
 })();
