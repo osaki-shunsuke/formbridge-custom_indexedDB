@@ -4,36 +4,41 @@
     // =========================================================================
     // 1. 設定エリア
     // =========================================================================
+    // ブラウザに備わっている保存領域（IndexedDB）の名前と管理番号
     const DB_NAME = 'FormBridge_Backup_DB';
     const STORE_NAME = 'record_backup';
     const DB_VERSION = 1;
 
-    // 圧縮対象のフィールドコード（添付ファイルフィールド）
-    // サブテーブル内にある場合も同様のフィールドコードとして扱います
+    // 圧縮・保存の対象となる「添付ファイル」フィールドの名前
+    // ※表（サブテーブル）の中にあってもこの名前で自動的に判定します
     const PHOTO_FIELDS = ['作業前', '作業後'];
 
+    // 画像を圧縮する際の設定（画質60%、横幅の最大サイズを1280pxに縮小）
     const COMPRESS_CONFIG = {
         quality: 0.6,
         maxWidth: 1280,
         mimeType: 'image/jpeg'
     };
 
+    // 画像圧縮を自動で行ってくれる外部プログラムのURL
     const COMPRESSOR_LIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/compressorjs/1.2.1/compressor.min.js';
 
     // =========================================================================
-    // 2. 状態管理変数
+    // 2. 状態管理変数（裏側で何が起きているかを記録するメモ）
     // =========================================================================
-    // バックアップ保存の非同期処理を追跡するためのPromise
+    // 「今、データをPC/スマホに保存している最中か？」を記録する場所
     let pendingSavePromise = null;
-    // 画像圧縮中であることを判別するためのフラグ
+    // 「今、画像を圧縮している最中か？」を記録する場所
     let isCompressing = false;
-    // 初回の復元判定を複数回（ステップ 이동や確認画面戻り）走らせないためのフラグ
+    // 「すでに一時保存データを復元したか？」を記録する場所（何度も聞かれないようにするため）
     let backupRestored = false;
 
     // =========================================================================
     // 3. UI部品 (進捗インジケーター)
+    // 画面のトップに「📷画像を圧縮中... 残り X 枚」という青い帯を表示する仕組み
     // =========================================================================
     const ProgressIndicator = {
+        // 画面に青い帯の枠組みを作る
         init() {
             if (document.getElementById('fb-custom-progress')) return;
             const container = document.querySelector('.fb-custom--main') || document.body;
@@ -57,6 +62,7 @@
             `;
             container.insertBefore(el, container.firstChild);
         },
+        // 合計枚数を受け取って青い帯を表示する
         show(total) {
             this.init();
             const el = document.getElementById('fb-custom-progress');
@@ -66,27 +72,31 @@
                 this.update(total, total);
             }
         },
+        // 圧縮が終わるたびに「残り 何枚」の数字を減らして更新する
         update(remaining, total) {
             const el = document.getElementById('fb-custom-progress');
             if (el) {
                 el.textContent = `📷 画像を圧縮中... 残り ${remaining} 枚 / 全 ${total} 枚`;
             }
         },
+        // 全て終わったら青い帯を隠す
         hide() {
             const el = document.getElementById('fb-custom-progress');
             if (el) {
                 el.style.opacity = '0';
                 setTimeout(() => {
                     el.style.display = 'none';
-                }, 300);
+                }, 300); // 0.3秒かけてフワッと消す
             }
         }
     };
 
     // =========================================================================
-    // 4. IndexedDB 操作ユーティリティ （エラーハンドリング対応）
+    // 4. データ保存の仕組み（IndexedDB 操作）
+    // ブラウザの中に「一時保存データ」を読み書きする機能です
     // =========================================================================
     const dbOp = {
+        // 保存領域を準備する（開く）
         open() {
             return new Promise((resolve, reject) => {
                 try {
@@ -98,27 +108,28 @@
                         }
                     };
                     request.onsuccess = (e) => resolve(e.target.result);
-                    request.onerror = (e) => reject(e.target.error || new Error('IndexedDB Not Available'));
+                    request.onerror = (e) => reject(e.target.error || new Error('保存領域が利用できません'));
                 } catch (err) {
                     reject(err);
                 }
             });
         },
+        // 入力された文字や写真を保存する（スマホの容量限界等のエラーもキャッチする）
         async save(record) {
             try {
                 const db = await this.open();
                 return await new Promise((resolve, reject) => {
                     const tx = db.transaction(STORE_NAME, 'readwrite');
                     const store = tx.objectStore(STORE_NAME);
-                    // フォームのパス（URL）をキーにして保存
+                    // フォームのURLを箱のラベルにしてデータをしまう
                     const request = store.put(record, location.pathname);
                     tx.oncomplete = () => resolve();
                     tx.onerror = (e) => reject(request.error || e.target.error);
                 });
             } catch (error) {
-                console.error('IndexedDB 保存エラー:', error);
+                console.error('保存に失敗:', error);
                 const errName = error && error.name;
-                // 容量制限エラーとブラウザ制限のフォールバック対応
+                // ブラウザの容量オーバー等のエラーが出た際の警告メッセージ
                 if (errName === 'QuotaExceededError') {
                     alert('端末のストレージ容量制限に達したため、バックアップ保存できませんでした。\n画像の枚数を減らすか、空き容量を確保してください。');
                 } else if (errName === 'NotAllowedError' || errName === 'SecurityError' || !error) {
@@ -126,6 +137,7 @@
                 }
             }
         },
+        // しまってあった一時保存データを取り出す
         async load() {
             try {
                 const db = await this.open();
@@ -137,10 +149,10 @@
                     request.onerror = (e) => reject(e.target.error);
                 });
             } catch (error) {
-                console.warn('IndexedDB 読み込みスキップ:', error);
                 return null;
             }
         },
+        // 一時保存データを全て消去する（送信が終わったあとに空にするため）
         async clear() {
             try {
                 const db = await this.open();
@@ -152,14 +164,15 @@
                     tx.onerror = (e) => reject(e.target.error);
                 });
             } catch (error) {
-                console.warn('IndexedDB クリアエラー:', error);
+                console.warn('消去エラー:', error);
             }
         }
     };
 
     // =========================================================================
-    // 5. データ再帰走査ロジック（サブテーブル完全対応）
+    // 5. データの検索ロジック（表の中身まで細かくチェックする仕組み）
     // =========================================================================
+    // フォームの中に「サブテーブル（表）」がある場合、その奥深くに隠れているデータも引っ張り出すための関数です
     function traverseRecord(record, callback) {
         if (!record || typeof record !== 'object') return;
 
@@ -167,8 +180,10 @@
             const field = record[fieldCode];
             if (!field) return;
 
+            // 見つけたデータに対して指定の処理（保存やチェック）を行う
             callback(field, fieldCode);
 
+            // もし表（サブテーブル）だったら、その中の行を1つずつチェックする
             if (field.type === 'SUBTABLE' && Array.isArray(field.value)) {
                 field.value.forEach(row => {
                     if (row && row.value) {
@@ -179,6 +194,7 @@
         });
     }
 
+    // 「現在開いている画面に、すでに何か文字などが入力されているか？」を判定する関数
     function isRecordDirty(record) {
         let dirty = false;
         traverseRecord(record, (field, code) => {
@@ -194,32 +210,34 @@
     }
 
     // =========================================================================
-    // 6. 画像圧縮ロジック
+    // 6. 画像圧縮の仕組み
+    // 設定エリアで指定した外部プログラム（Compressor.js）を使って画像サイズを小さくします
     // =========================================================================
     const script = document.createElement('script');
     script.src = COMPRESSOR_LIB_URL;
     document.head.appendChild(script);
 
     async function compressImage(file) {
+        // プログラムが読み込まれるまで少し待つ
         if (!window.Compressor) {
             await new Promise(r => setTimeout(r, 500));
         }
         return new Promise((resolve, reject) => {
             new window.Compressor(file, {
                 ...COMPRESS_CONFIG,
-                success: (res) => resolve(new File([res], file.name, { type: res.type })),
-                error: (err) => reject(err)
+                success: (res) => resolve(new File([res], file.name, { type: res.type })), // 圧縮成功
+                error: (err) => reject(err) // 圧縮失敗
             });
         });
     }
 
     // =========================================================================
-    // 7. FormBridge イベント連携
+    // 7. FormBridge 本体との連携（自動保存・復元を行うタイミングの設定）
     // =========================================================================
 
-    // ▼ 表示時：バックアップの復元
+    // ▼ 画面が表示された時：前回の一時保存データを見つけて復元する
     formBridge.events.on('form.show', async (context) => {
-        if (backupRestored) return; // 復元確認は1回だけ行う
+        if (backupRestored) return; // 何度も「復元しますか？」と聞かれないようにする
         backupRestored = true;
 
         try {
@@ -228,85 +246,91 @@
                 const current = formBridge.fn.getRecord();
                 const isDirty = isRecordDirty(current);
 
+                // 画面がまだ白紙の場合にのみ、「復元しますか？」と聞く
                 if (!isDirty && confirm('一時保存されているデータが見つかりました。復元しますか？')) {
                     Object.keys(backup).forEach(key => {
                         context.setFieldValue(key, backup[key].value);
                     });
-                    console.log('✅ IndexedDBからデータを復元しました（サブテーブル含む）');
                 }
             }
         } catch (e) {
-            console.error('復元エラー:', e);
+            console.error('復元にかかわるエラー:', e);
         }
     });
 
-    // ▼ 値変更時（ファイル選択）：バックアップの保存 ＋ 画像圧縮
+    // ▼ 写真が選択された時：まず画像を圧縮して、その後に一時保存する
     document.addEventListener('change', async function (e) {
+        // 選ばれたのがファイルじゃない場合は引き返す
         if (!e.target || e.target.type !== 'file') return;
 
         const wrapper = e.target.closest('[data-field-code]');
         if (!wrapper) return;
         
         const fieldCode = wrapper.getAttribute('data-field-code');
+        // ココが「作業前」「作業後」等の対象項目じゃなければ引き返す
         if (!PHOTO_FIELDS.includes(fieldCode)) return;
         if (e.target.dataset.processed === 'true') return;
 
-        // 以降の通常処理を一時ストップ
+        // 【ストップ】ここから先はFormBridge本来の動きを裏で一時停止させて自前のプログラムを割り込ませる
         e.stopPropagation();
         e.stopImmediatePropagation();
 
         const dt = new DataTransfer();
         const originalFiles = Array.from(e.target.files);
+        // 選ばれたファイルの中から写真（画像）だけを区別する
         const imageFiles = originalFiles.filter(f => f.type.startsWith('image/'));
 
         if (imageFiles.length > 0) {
-            isCompressing = true; // 圧縮中は送信させないためのフラグ
-            ProgressIndicator.show(imageFiles.length);
+            isCompressing = true; // 「圧縮中」の印を付ける（この間は送信できなくする）
+            ProgressIndicator.show(imageFiles.length); // 画面上に青い帯を表示
             let remaining = imageFiles.length;
 
+            // 添付された写真を1枚ずつ順番に圧縮していく
             for (const file of originalFiles) {
                 if (file.type.startsWith('image/')) {
                     try {
                         const compressed = await compressImage(file);
                         dt.items.add(compressed);
                     } catch (err) {
-                        console.error('画像圧縮エラー:', err);
-                        dt.items.add(file);
+                        dt.items.add(file); // 万が一エラーが起きたら圧縮せずにそのまま扱う
                     } finally {
                         remaining--;
-                        ProgressIndicator.update(remaining, imageFiles.length);
+                        ProgressIndicator.update(remaining, imageFiles.length); // 残り枚数を減らして帯の文字を変える
                     }
                 } else {
-                    dt.items.add(file);
+                    dt.items.add(file); // 写真以外（PDF等）はそのまま扱う
                 }
             }
-            ProgressIndicator.hide();
-            isCompressing = false; // 圧縮完了
+            ProgressIndicator.hide(); // 全部終わったら青い帯を消す
+            isCompressing = false; // 「圧縮中」の印を外す
         } else {
+            // 画像以外がアップロードされた場合
             for (const file of originalFiles) dt.items.add(file);
         }
 
+        // 圧縮されたキレイな写真を、見えない所で入力欄にセットし直す
         e.target.files = dt.files;
         e.target.dataset.processed = 'true';
 
-        // FormBridgeへ変更の完了を伝播
+        // FormBridgeへ「ファイルの準備が終わったこと」を伝達する
         e.target.dispatchEvent(new Event('change', { bubbles: true }));
 
+        // 写真のセットからわずかに遅らせて、入力中のデータを全て一時保存（バックアップ）する
         setTimeout(() => {
             const currentRecord = formBridge.fn.getRecord();
             pendingSavePromise = dbOp.save(currentRecord).then(() => {
-                console.log('💾 画像追加に伴い IndexedDB に保存しました');
                 pendingSavePromise = null;
             });
         }, 500);
 
     }, true);
 
-    // ▼ テキスト入力の変更も監視して保存（サブテーブル等すべて網羅）
+    // ▼ それ以外のテキスト入力・項目の変更があった際も、自動で一時保存する
     formBridge.events.on('form.show', () => {
         if (window.__fb_change_hooked) return;
         window.__fb_change_hooked = true;
 
+        // この関数が呼ばれると画面の今の状態がすべて保存される
         const saveHandler = () => {
             const record = formBridge.fn.getRecord();
             pendingSavePromise = dbOp.save(record).then(() => {
@@ -314,18 +338,17 @@
             }).catch(() => { pendingSavePromise = null; });
         };
 
+        // 全部の入力欄に対し、「文字が打たれる・選ばれる」度に保存処理を行うよう監視をつける
         const settings = formBridge.fn.getFieldSettings();
         settings.forEach(s => {
-            // 通常フィールドおよびルックアップの変更監視
             formBridge.events.on(`form.field.change.${s.code}`, saveHandler);
             formBridge.events.on(`form.kviewerLookup.selectRecord.${s.code}`, saveHandler);
 
-            // サブテーブル固有のイベント監視
+            // サブテーブル（表）の「行の追加」「行の削除」や、表の中の項目変更も監視する
             if (s.type === 'SUBTABLE') {
                 formBridge.events.on(`form.subtable.addRow.${s.code}`, saveHandler);
                 formBridge.events.on(`form.subtable.removeRow.${s.code}`, saveHandler);
                 
-                // サブテーブル内の各フィールドの変更
                 if (s.tableFields) {
                     s.tableFields.forEach(ts => {
                         formBridge.events.on(`form.field.change.${s.code}.${ts.code}`, saveHandler);
@@ -337,52 +360,51 @@
     });
 
     // =========================================================================
-    // 8. 遷移・送信時の制御ロジック
+    // 8. ページ遷移・送信時（「確認」「回答」ボタンを押したとき）の安全措置
     // =========================================================================
 
+    // 「画像を圧縮している途中」や「保存処理中」に送信ボタンが押されたら、処理が終わるまで意図的に待たせる仕組み
     const stopIfProcessing = (context, isConfirmScreen = false) => {
         if (isCompressing) {
             alert('📷 現在画像を圧縮処理中です。完了するまでお待ちください。');
-            context.preventDefault();
+            context.preventDefault(); // 画面遷移をここで一旦ストップ
             return true;
         }
         if (isConfirmScreen && pendingSavePromise) {
-            // 確認画面へ移動する（form.confirm）の場合はemitが無いのでアラートで待ってもらう
             alert('💾 バックアップ保存中です。数秒待ってから再度お試しください。');
-            context.preventDefault();
+            context.preventDefault(); // 画面遷移をここで一旦ストップ
             return true;
         }
         return false;
     };
 
-    // 確認画面への遷移（確認画面設定がある場合）
+    // 「確認画面」へ移動するボタンが押された時のチェック
     formBridge.events.on('form.confirm', (context) => {
         stopIfProcessing(context, true);
     });
 
-    // 確認画面経由、または直接送信される場合
+    // 「送信（回答）」ボタンが押された時のチェック
     const handleSubmit = (context) => {
         if (stopIfProcessing(context, false)) return;
 
+        // まだ裏側で一時保存処理が動いていれば、それが終わるのを待ってから「自動で」再送信する
         if (pendingSavePromise) {
-            console.log('⏳ バックアップ保存中のため、送信を一時待機します...');
-            context.preventDefault();
+            context.preventDefault(); // エラーにならないよう送信を一旦ストップ
 
+            // 保存が終わったタイミングで、プログラム側から改めて送信ボタンを押す
             pendingSavePromise.then(() => {
-                console.log('🔄 保存完了。送信処理を再開します。');
-                formBridge.fn.emitSubmit();
+                formBridge.fn.emitSubmit(); 
             });
         }
     };
     
-    // サブミット時のイベント（どちらの画面からでもフックする）
+    // どの画面からの送信時でもチェックを通す
     formBridge.events.on('form.submit', handleSubmit);
     formBridge.events.on('confirm.submit', handleSubmit);
 
-    // ▼ 送信完了時：バックアップの削除
+    // ▼ 送信が完全に終わったら（サンクスページ等）、用済みのバックアップデータを綺麗に削除する
     const clearBackup = async () => {
         await dbOp.clear();
-        console.log('🗑️ 送信完了のためバックアップを削除しました');
     };
     formBridge.events.on('form.submitted', clearBackup);
     formBridge.events.on('confirm.submitted', clearBackup);
