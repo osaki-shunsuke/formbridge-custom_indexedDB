@@ -426,8 +426,26 @@
                 if (requireRestore) {
                     // 通常の文字入力などのフィールドを復元
                     Object.keys(backup).forEach(key => {
-                        if (key !== '__offline_files_data') {
-                            context.setFieldValue(key, backup[key].value);
+                        if (key === '__offline_files_data') return;
+                        if (!backup[key]) return;
+
+                        if (backup[key].type === 'FILE') {
+                            // ファイルは直後にDOMレベルで専用の復元処理をするためスキップ
+                            return;
+                        } else if (backup[key].type === 'SUBTABLE') {
+                            // サブテーブルは setFieldValue だと『Unexpected field type: SUBTABLE』エラーになるため直接 record へ復元
+                            if (context.record && context.record[key]) {
+                                context.record[key].value = backup[key].value;
+                            }
+                        } else {
+                            try {
+                                context.setFieldValue(key, backup[key].value);
+                            } catch (e) {
+                                console.warn('フィールド復元エラー:', key, e);
+                                if (context.record && context.record[key]) {
+                                    context.record[key].value = backup[key].value;
+                                }
+                            }
                         }
                     });
                     
@@ -489,6 +507,9 @@
             console.error('復元にかかわるエラー:', e);
             isRestoring = false;
         }
+        
+        // FormBridgeへ書き換えた状態を返す(状態更新を反映させるため)
+        return context;
     });
 
     // ▼ 写真が選択された時：まず画像を圧縮して、その後に一時保存する
