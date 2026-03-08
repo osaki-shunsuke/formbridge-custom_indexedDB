@@ -295,7 +295,7 @@
         const recordToSave = Object.assign({}, currentRecord);
         
         const allFileInputs = document.querySelectorAll('input[type="file"]');
-        const offlineFilesData = [];
+        const offlineFilesData = [...daemonMonitoringData]; // デーモンが記憶しているデータをベースにする
         
         // ファイルをBase64文字列に変換する関数（絶対にデータが消えないようにするため）
         const getBase64 = (file) => new Promise((resolve) => {
@@ -306,6 +306,8 @@
         });
 
         for (const input of Array.from(allFileInputs)) {
+            // VueによるDOM上書きで消えた場合は input.filesが空になるが、
+            // その場合でも「daemonMonitoringData」には記録が残っているので上書き消去されない
             if (input.files && input.files.length > 0) {
                 const wrapper = input.closest('[data-field-code]');
                 if (!wrapper) continue;
@@ -323,11 +325,16 @@
                 }
                 
                 if (fileDatas.length > 0) {
-                    offlineFilesData.push({
-                        fieldCode: fieldCode,
-                        wrapperIndex: wrapperIndex,
-                        files: fileDatas
-                    });
+                    const existingIndex = offlineFilesData.findIndex(d => d.fieldCode === fieldCode && d.wrapperIndex === wrapperIndex);
+                    if (existingIndex !== -1) {
+                        offlineFilesData[existingIndex].files = fileDatas;
+                    } else {
+                        offlineFilesData.push({
+                            fieldCode: fieldCode,
+                            wrapperIndex: wrapperIndex,
+                            files: fileDatas
+                        });
+                    }
                 }
             }
         }
@@ -439,9 +446,9 @@
                                     const input = wrapper.querySelector('input[type="file"]');
                                     if (input) {
                                         try {
+                                            // まずは常にファイルをセットする
                                             const dt = new DataTransfer();
                                             for (const f of data.files) {
-                                                // fetchによるDataURI例外を防ぐため、安全な文字列パースでFile化
                                                 const blob = base64ToBlob(f.data, f.type || 'image/jpeg');
                                                 const fObj = new File([blob], f.name || 'image.jpg', { type: f.type || 'image/jpeg' });
                                                 dt.items.add(fObj);
@@ -449,9 +456,13 @@
                                             input.files = dt.files;
                                             input.dataset.processed = 'true';
                                             
-                                            // 復元完了時にオンラインであれば、FormBridgeに「ファイルが入ったよ」と通知してアップロードさせる
+                                            // オンラインかつ復元直後の場合はアップロードを試みる、ただしオフライン専用 UI を上書きするためオンラインでも UI ガードする
                                             if (!isOfflineMode && navigator.onLine) {
-                                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                                                // 復元直後すぐに dispatchEvent すると Vue が追いつかず消えるので、確実に UI を一時保存化してから FormBridge に流す
+                                                restoreUIForOfflineFile(wrapper, input, data.files); 
+                                                setTimeout(() => {
+                                                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                                                }, 100);
                                             } else {
                                                 restoreUIForOfflineFile(wrapper, input, data.files);
                                             }
@@ -605,7 +616,7 @@
 
     // 画面の監視（Vueの仮想DOM差分更新によって独自のUIが吹き飛ばされても必ず復活させるデーモン）
     setInterval(() => {
-        if (!isOfflineMode) return;
+        // オフラインモードに関わらず、デーモンの記憶にデータが残っていれば絶対にUIを維持する
         if (!daemonMonitoringData || daemonMonitoringData.length === 0) return;
         
         daemonMonitoringData.forEach(data => {
