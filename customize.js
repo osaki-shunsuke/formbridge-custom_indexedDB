@@ -34,8 +34,8 @@
     let backupRestored = false;
     // 「復旧処理中か？」を記録する場所（復元前に空のデータで上書き保存されるのを防ぐ）
     let isRestoring = false;
-    // 「オフラインモード（アップロード停止・一時保存専用）」がONかどうか
-    let isOfflineMode = false;
+    // 「オフラインモード（アップロード停止・一時保存専用）」がONかどうか（リロードしても記憶させる）
+    let isOfflineMode = localStorage.getItem('fb_offline_mode') === 'true';
 
     // =========================================================================
     // 3. UI部品 (進捗インジケーター & モード切替ボタン)
@@ -56,9 +56,21 @@
 
             const btn = document.createElement('button');
             btn.id = 'fb-custom-offline-btn';
-            btn.innerHTML = '🌐 オンラインモード<br><span style="font-size:11px;">(クリックで一時保存専用に切替)</span>';
+            
+            const updateBtnUI = () => {
+                if (isOfflineMode) {
+                    btn.innerHTML = '✈️ オフライン(一時保存)モード<br><span style="font-size:11px;">(現在アップロード停止中)</span>';
+                    btn.style.backgroundColor = '#6c757d';
+                } else {
+                    btn.innerHTML = '🌐 オンラインモード<br><span style="font-size:11px;">(クリックで一時保存専用に切替)</span>';
+                    btn.style.backgroundColor = '#28a745';
+                }
+            };
+            
+            // 初期のUIセット
+            updateBtnUI();
+
             btn.style.cssText = `
-                background-color: #28a745;
                 color: #ffffff;
                 text-align: center;
                 padding: 8px 15px;
@@ -76,13 +88,12 @@
             btn.onclick = (e) => {
                 e.preventDefault();
                 isOfflineMode = !isOfflineMode;
+                localStorage.setItem('fb_offline_mode', isOfflineMode); // 設定を保存
+                updateBtnUI();
+                
                 if (isOfflineMode) {
-                    btn.innerHTML = '✈️ オフライン(一時保存)モード<br><span style="font-size:11px;">(現在アップロード停止中)</span>';
-                    btn.style.backgroundColor = '#6c757d';
                     alert('【オフラインモードをONにしました】\nこれ以降に添付された画像はFormBridgeへアップロードせず、すぐ裏側(IndexedDB)に保存して処理を終えます。グルグル回ることはありません。\n電波が回復したら、このボタンをオンラインに戻してページを再読み込みしてください。');
                 } else {
-                    btn.innerHTML = '🌐 オンラインモード<br><span style="font-size:11px;">(クリックで一時保存専用に切替)</span>';
-                    btn.style.backgroundColor = '#28a745';
                     alert('【オンラインモードに戻しました】\n未送信の画像がある場合は、ページを再読み込み（リロード）することでアップロードを再開できます。');
                 }
             };
