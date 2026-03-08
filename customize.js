@@ -244,20 +244,7 @@
         });
     }
 
-    // 「現在開いている画面に、すでに何か文字などが入力されているか？」を判定する関数
-    function isRecordDirty(record) {
-        let dirty = false;
-        traverseRecord(record, (field, code) => {
-            if (field.type === 'SUBTABLE') return;
-
-            if (Array.isArray(field.value)) {
-                if (field.value.length > 0) dirty = true;
-            } else if (field.value !== null && field.value !== undefined && field.value !== '') {
-                dirty = true;
-            }
-        });
-        return dirty;
-    }
+ 
 
     // =========================================================================
     // 6. 画像圧縮ロジック
@@ -333,11 +320,9 @@
         try {
             const backup = await dbOp.load();
             if (backup && Object.keys(backup).length > 0) {
-                const current = formBridge.fn.getRecord();
-                const isDirty = isRecordDirty(current);
-
-                // 画面がまだ白紙の場合にのみ、「復元しますか？」と聞く
-                if (!isDirty && confirm('一時保存されているデータが見つかりました。復元しますか？')) {
+                // デフォルト値などでisDirtyの判定が狂うのを防ぐため、バックアップデータが存在すれば常に確認を出す
+                const requireRestore = confirm('未送信の一時保存データが見つかりました。\n前回入力していた内容や画像を復元しますか？');
+                if (requireRestore) {
                     // 通常の文字入力などのフィールドを復元
                     Object.keys(backup).forEach(key => {
                         if (key !== '__offline_files_data') {
@@ -372,8 +357,8 @@
                                                 input.dispatchEvent(new Event('change', { bubbles: true }));
                                             } else {
                                                 // オフライン状態での復元ならUIを「一時保存済」状態に変える
-                                                const addFileBtn = wrapper.querySelector('.fb-add-file');
-                                                if (addFileBtn) addFileBtn.style.display = 'none';
+                                                const uploadDiv = wrapper.querySelector('.el-upload');
+                                                if (uploadDiv) uploadDiv.style.display = 'none';
                                                 
                                                 let indicator = wrapper.querySelector('.fb-offline-indicator');
                                                 if (!indicator) {
@@ -386,7 +371,7 @@
                                                     indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
                                                         input.value = '';
                                                         input.dataset.processed = '';
-                                                        if (addFileBtn) addFileBtn.style.display = '';
+                                                        if (uploadDiv) uploadDiv.style.display = '';
                                                         indicator.remove();
                                                         saveWithOfflineFiles();
                                                     });
@@ -473,9 +458,9 @@
             
             // UI更新: ユーザーに一時保存完了が伝わるようにする
             if (wrapper) {
-                // デフォルトの「ファイルを選択」ボタンを隠す
-                const addFileBtn = wrapper.querySelector('.fb-add-file');
-                if (addFileBtn) addFileBtn.style.display = 'none';
+                // デフォルトの「ファイルを選択」要素ごと隠す
+                const uploadDiv = wrapper.querySelector('.el-upload');
+                if (uploadDiv) uploadDiv.style.display = 'none';
                 
                 // 「一時保存済」表示をつける
                 let indicator = wrapper.querySelector('.fb-offline-indicator');
@@ -491,7 +476,7 @@
                     indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
                         e.target.value = '';
                         e.target.dataset.processed = '';
-                        if (addFileBtn) addFileBtn.style.display = ''; // ボタン復活
+                        if (uploadDiv) uploadDiv.style.display = ''; // ボタン復活
                         indicator.remove();
                         saveWithOfflineFiles(); // クリア状態を上書き保存
                     });
