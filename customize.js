@@ -337,9 +337,12 @@
         }).catch(() => { pendingSavePromise = null; });
     };
 
-    // 画像復元処理のヘルパー関数（リロード時の復元と、「選び直す」時のリセットに使う）
+    // 画像復元処理のヘルパー関数
     const restoreUIForOfflineFile = (wrapper, input, fileDataArray) => {
-        // UIを「一時保存済」状態に変える。親や兄弟にあるすべてのアップロードボタン要素を隠す
+        // FormBridgeのVueがDOMを書き換えても残るよう、親要素に属性を付ける
+        wrapper.setAttribute('data-offline-restored', 'true');
+        
+        // デフォルト要素を隠す
         const hideTargets = wrapper.querySelectorAll('.el-upload, .fb-add-file, .fb-file-button, button.el-button, [type="button"]');
         hideTargets.forEach(el => {
             if (!el.classList.contains('fb-offline-reset-btn') && !el.classList.contains('fb-remove-row-btn')) {
@@ -348,27 +351,42 @@
             }
         });
         
-        // 古いメッセージがあれば削除
+        // 古いメッセージ削除
         let indicator = wrapper.querySelector('.fb-offline-indicator');
         if (indicator) indicator.remove();
 
         indicator = document.createElement('div');
         indicator.className = 'fb-offline-indicator';
-        indicator.style.cssText = 'background-color:#d4edda; color:#155724; padding:10px; border-radius:4px; margin-top:5px; border:1px solid #c3e6cb; font-size:14px; text-align: left; line-height: 1.5;';
+        indicator.style.cssText = 'background-color:#d4edda; color:#155724; padding:10px; border-radius:4px; margin-top:5px; border:1px solid #c3e6cb; font-size:14px; text-align: left; line-height: 1.5; z-index: 10;';
+        
         const fileNamesHtml = fileDataArray.map(f => `<div>📄 ${f.name}</div>`).join('');
         indicator.innerHTML = `✅ <b>オフライン一時保存済:</b><br>${fileNamesHtml}<br><button type="button" class="fb-offline-reset-btn" style="margin-top:8px; padding:4px 10px; font-size:12px; cursor:pointer; background:#fff; border:1px solid #aaa; border-radius:3px;">選び直す</button>`;
         wrapper.appendChild(indicator);
         
-        indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
+        indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
             input.value = '';
             input.dataset.processed = '';
+            wrapper.removeAttribute('data-offline-restored');
             wrapper.querySelectorAll('[data-offline-hidden="true"]').forEach(el => {
-                el.style.display = ''; // ボタン復活
+                el.style.display = ''; 
                 el.dataset.offlineHidden = '';
             });
             indicator.remove();
             saveWithOfflineFiles();
         });
+    };
+
+    // 同期的にBase64からBlobを作成するヘルパー（CSPでfetchが弾かれる現象の回避）
+    const base64ToBlob = (base64Str, contentType) => {
+        const parts = base64Str.split(',');
+        const bstr = atob(parts[1] || parts[0]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+            u8arr[n] = bstr.charCodeAt(n);
+        }
+        return new Blob([u8arr], { type: contentType });
     };
 
     // =========================================================================
@@ -411,9 +429,8 @@
                                         try {
                                             const dt = new DataTransfer();
                                             for (const f of data.files) {
-                                                // Base64からFileオブジェクトを再構成
-                                                const res = await fetch(f.data);
-                                                const blob = await res.blob();
+                                                // fetchによるDataURI例外を防ぐため、安全な文字列パースでFile化
+                                                const blob = base64ToBlob(f.data, f.type || 'image/jpeg');
                                                 const fObj = new File([blob], f.name || 'image.jpg', { type: f.type || 'image/jpeg' });
                                                 dt.items.add(fObj);
                                             }
@@ -573,6 +590,22 @@
             }
         });
     });
+
+    // 画面の監視（Vueの仮想DOM差分更新によって独自のUIが吹き飛ばされても必ず復活させるデーモン）
+    setInterval(() => {
+        if (!isOfflineMode) return;
+        const wrappers = document.querySelectorAll('[data-offline-restored="true"]');
+        wrappers.forEach(wrapper => {
+            if (!wrapper.querySelector('.fb-offline-indicator')) {
+                // DOMが初期化されてしまったら、ファイルが消えていないか再チェックする
+                const input = wrapper.querySelector('input[type="file"]');
+                if (input && input.files && input.files.length > 0) {
+                    const fileNames = Array.from(input.files).map(f => ({ name: f.name }));
+                    restoreUIForOfflineFile(wrapper, input, fileNames);
+                }
+            }
+        });
+    }, 1500);
 
     // =========================================================================
     // 8. ページ遷移・送信時（「確認」「回答」ボタンを押したとき）の制御ロジック（安全措置）
