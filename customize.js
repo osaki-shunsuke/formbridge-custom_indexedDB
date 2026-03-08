@@ -13,33 +13,83 @@
     // ※表（サブテーブル）の中にあってもこの名前で自動的に判定します
     const PHOTO_FIELDS = ['作業前', '作業後'];
 
-    // 画像を圧縮する際の設定（画質60%、横幅の最大サイズを1280pxに縮小）
+    // 画像を圧縮する際の設定（画質70%、横幅の最大サイズを1280pxに縮小）
     const COMPRESS_CONFIG = {
-        quality: 0.6,
+        quality: 0.7,
         maxWidth: 1280,
         mimeType: 'image/jpeg'
     };
 
-    // 画像圧縮を自動で行ってくれる外部プログラムのURL
+    // 画像圧縮を行うライブラリ(CDN)のURL
     const COMPRESSOR_LIB_URL = 'https://cdnjs.cloudflare.com/ajax/libs/compressorjs/1.2.1/compressor.min.js';
 
     // =========================================================================
-    // 2. 状態管理変数（裏側で何が起きているかを記録するメモ）
+    // 2. 状態管理変数（裏側で何が起きているかを記録）
     // =========================================================================
-    // 「今、データをPC/スマホに保存している最中か？」を記録する場所
+    // 「保存処理が行われている最中か？」を記録する場所
     let pendingSavePromise = null;
-    // 「今、画像を圧縮している最中か？」を記録する場所
+    // 「画像を圧縮している最中か？」を記録する場所
     let isCompressing = false;
     // 「すでに一時保存データを復元したか？」を記録する場所（何度も聞かれないようにするため）
     let backupRestored = false;
+    // 「オフラインモード（アップロード停止・一時保存専用）」がONかどうか
+    let isOfflineMode = false;
 
     // =========================================================================
-    // 3. UI部品 (進捗インジケーター)
+    // 3. UI部品 (進捗インジケーター & モード切替ボタン)
     // 画面のトップに「📷画像を圧縮中... 残り X 枚」という青い帯を表示する仕組み
     // =========================================================================
     const ProgressIndicator = {
+        // オフラインモード切替ボタンの作成
+        initOfflineButton() {
+            if (document.getElementById('fb-custom-offline-btn')) return;
+            const container = document.querySelector('.fb-custom--main') || document.body;
+            
+            const wrapper = document.createElement('div');
+            wrapper.style.cssText = `
+                display: flex;
+                justify-content: flex-end;
+                margin-bottom: 10px;
+            `;
+
+            const btn = document.createElement('button');
+            btn.id = 'fb-custom-offline-btn';
+            btn.innerHTML = '🌐 オンラインモード<br><span style="font-size:11px;">(クリックで一時保存専用に切替)</span>';
+            btn.style.cssText = `
+                background-color: #28a745;
+                color: #ffffff;
+                text-align: center;
+                padding: 8px 15px;
+                font-size: 14px;
+                font-weight: bold;
+                border: none;
+                cursor: pointer;
+                border-radius: 6px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                transition: all 0.3s;
+                line-height: 1.2;
+            `;
+            
+            // モード切替のクリック処理
+            btn.onclick = (e) => {
+                e.preventDefault();
+                isOfflineMode = !isOfflineMode;
+                if (isOfflineMode) {
+                    btn.innerHTML = '✈️ オフライン(一時保存)モード<br><span style="font-size:11px;">(現在アップロード停止中)</span>';
+                    btn.style.backgroundColor = '#6c757d';
+                    alert('【オフラインモードをONにしました】\nこれ以降に添付された画像はFormBridgeへアップロードせず、すぐ裏側(IndexedDB)に保存して処理を終えます。グルグル回ることはありません。\n電波が回復したら、このボタンをオンラインに戻してページを再読み込みしてください。');
+                } else {
+                    btn.innerHTML = '🌐 オンラインモード<br><span style="font-size:11px;">(クリックで一時保存専用に切替)</span>';
+                    btn.style.backgroundColor = '#28a745';
+                    alert('【オンラインモードに戻しました】\n未送信の画像がある場合は、ページを再読み込み（リロード）することでアップロードを再開できます。');
+                }
+            };
+            wrapper.appendChild(btn);
+            container.insertBefore(wrapper, container.firstChild);
+        },
         // 画面に青い帯の枠組みを作る
         init() {
+            this.initOfflineButton();
             if (document.getElementById('fb-custom-progress')) return;
             const container = document.querySelector('.fb-custom--main') || document.body;
             const el = document.createElement('div');
@@ -86,14 +136,14 @@
                 el.style.opacity = '0';
                 setTimeout(() => {
                     el.style.display = 'none';
-                }, 300); // 0.3秒かけてフワッと消す
+                }, 300); // 0.3秒かけて消す
             }
         }
     };
 
     // =========================================================================
-    // 4. データ保存の仕組み（IndexedDB 操作）
-    // ブラウザの中に「一時保存データ」を読み書きする機能です
+    // 4. データ保存の仕組み・エラーハンドリング（IndexedDB 操作）
+    // ブラウザの中に「一時保存データ」を読み書きする機能
     // =========================================================================
     const dbOp = {
         // 保存領域を準備する（開く）
@@ -164,15 +214,15 @@
                     tx.onerror = (e) => reject(e.target.error);
                 });
             } catch (error) {
-                console.warn('消去エラー:', error);
+                console.warn('indexedDB消去エラー:', error);
             }
         }
     };
 
     // =========================================================================
-    // 5. データの検索ロジック（表の中身まで細かくチェックする仕組み）
+    // 5. データ検索ロジック（サブテーブル対応）
     // =========================================================================
-    // フォームの中に「サブテーブル（表）」がある場合、その奥深くに隠れているデータも引っ張り出すための関数です
+    // フォームの中にサブテーブルがある場合、そのデータも対象とするための関数
     function traverseRecord(record, callback) {
         if (!record || typeof record !== 'object') return;
 
@@ -183,7 +233,7 @@
             // 見つけたデータに対して指定の処理（保存やチェック）を行う
             callback(field, fieldCode);
 
-            // もし表（サブテーブル）だったら、その中の行を1つずつチェックする
+            // もしサブテーブルだったら、その中の行を1つずつチェック
             if (field.type === 'SUBTABLE' && Array.isArray(field.value)) {
                 field.value.forEach(row => {
                     if (row && row.value) {
@@ -199,7 +249,7 @@
         let dirty = false;
         traverseRecord(record, (field, code) => {
             if (field.type === 'SUBTABLE') return;
-            
+
             if (Array.isArray(field.value)) {
                 if (field.value.length > 0) dirty = true;
             } else if (field.value !== null && field.value !== undefined && field.value !== '') {
@@ -210,8 +260,8 @@
     }
 
     // =========================================================================
-    // 6. 画像圧縮の仕組み
-    // 設定エリアで指定した外部プログラム（Compressor.js）を使って画像サイズを小さくします
+    // 6. 画像圧縮ロジック
+    // 設定エリアで指定した外部プログラム（Compressor.js）を使って画像サイズを小さくする
     // =========================================================================
     const script = document.createElement('script');
     script.src = COMPRESSOR_LIB_URL;
@@ -232,12 +282,14 @@
     }
 
     // =========================================================================
-    // 7. FormBridge 本体との連携（自動保存・復元を行うタイミングの設定）
+    // 7. FormBridge イベント連携（自動保存・復元を行うタイミングの設定）
     // =========================================================================
 
-    // ▼ 画面が表示された時：前回の一時保存データを見つけて復元する
+    // ▼ 表示時：バックアップ（indexedDB）の復元とボタン設置
     formBridge.events.on('form.show', async (context) => {
-        if (backupRestored) return; // 何度も「復元しますか？」と聞かれないようにする
+        ProgressIndicator.initOfflineButton(); // 画面表示時にオフラインボタンを設置
+        
+        if (backupRestored) return; // 復元確認は1回だけ行う
         backupRestored = true;
 
         try {
@@ -248,15 +300,71 @@
 
                 // 画面がまだ白紙の場合にのみ、「復元しますか？」と聞く
                 if (!isDirty && confirm('一時保存されているデータが見つかりました。復元しますか？')) {
+                    // 通常の文字入力などのフィールドを復元
                     Object.keys(backup).forEach(key => {
-                        context.setFieldValue(key, backup[key].value);
+                        if (key !== '__offline_files_data') {
+                            context.setFieldValue(key, backup[key].value);
+                        }
                     });
+                    
+                    // 【追加】オフラインモード時に保存されたファイル画像たちを復元する
+                    if (backup.__offline_files_data && backup.__offline_files_data.length > 0) {
+                        // サブテーブルの行などが描画されるのを少し待つ
+                        setTimeout(() => {
+                            const allFileInputs = document.querySelectorAll('input[type="file"]');
+                            backup.__offline_files_data.forEach(data => {
+                                const input = allFileInputs[data.inputIndex];
+                                // 当時の画面上の順番(DOM階層)と同じ位置のファイル入力欄に書き戻す
+                                if (input) {
+                                    const dt = new DataTransfer();
+                                    data.files.forEach(f => dt.items.add(f));
+                                    input.files = dt.files;
+                                    input.dataset.processed = 'true';
+                                    
+                                    // 復元完了時にオンラインであれば、FormBridgeに「ファイルが入ったよ」と通知してアップロードさせる
+                                    if (!isOfflineMode && navigator.onLine) {
+                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                    }
+                                }
+                            });
+                        }, 1000); // UI構築待ちで1秒待機
+                    }
+
+                    console.log('✅ IndexedDBからデータを復元しました（サブテーブル含む）');
                 }
             }
         } catch (e) {
             console.error('復元にかかわるエラー:', e);
         }
     });
+
+    // 特別な保存処理：FormBridgeの公式データだけでなく、現在画面に残っているがアップロード前である「ファイルの中身」もかき集めて保存する
+    const saveWithOfflineFiles = () => {
+        const currentRecord = formBridge.fn.getRecord();
+        const recordToSave = Object.assign({}, currentRecord);
+        
+        // 画面上に存在するすべてのファイル入力欄から情報を集める
+        const allFileInputs = document.querySelectorAll('input[type="file"]');
+        const offlineFilesData = [];
+        
+        allFileInputs.forEach((input, index) => {
+            if (input.files && input.files.length > 0) {
+                const wrapper = input.closest('[data-field-code]');
+                const fieldCode = wrapper ? wrapper.getAttribute('data-field-code') : 'unknown';
+                offlineFilesData.push({
+                    inputIndex: index, // DOM上での順番
+                    fieldCode: fieldCode,
+                    files: Array.from(input.files) // 画像データそのもの
+                });
+            }
+        });
+        
+        recordToSave.__offline_files_data = offlineFilesData;
+        
+        pendingSavePromise = dbOp.save(recordToSave).then(() => {
+            pendingSavePromise = null;
+        }).catch(() => { pendingSavePromise = null; });
+    };
 
     // ▼ 写真が選択された時：まず画像を圧縮して、その後に一時保存する
     document.addEventListener('change', async function (e) {
@@ -265,13 +373,13 @@
 
         const wrapper = e.target.closest('[data-field-code]');
         if (!wrapper) return;
-        
+
         const fieldCode = wrapper.getAttribute('data-field-code');
-        // ココが「作業前」「作業後」等の対象項目じゃなければ引き返す
+        // 「作業前」「作業後」等の対象項目じゃなければ引き返す
         if (!PHOTO_FIELDS.includes(fieldCode)) return;
         if (e.target.dataset.processed === 'true') return;
 
-        // 【ストップ】ここから先はFormBridge本来の動きを裏で一時停止させて自前のプログラムを割り込ませる
+        // ここから先はFormBridge本来の動きを裏で一時停止させて自前のプログラムを割り込ませる
         e.stopPropagation();
         e.stopImmediatePropagation();
 
@@ -281,7 +389,7 @@
         const imageFiles = originalFiles.filter(f => f.type.startsWith('image/'));
 
         if (imageFiles.length > 0) {
-            isCompressing = true; // 「圧縮中」の印を付ける（この間は送信できなくする）
+            isCompressing = true; // 「圧縮中」のフラグを付ける（この間は送信できなくする）
             ProgressIndicator.show(imageFiles.length); // 画面上に青い帯を表示
             let remaining = imageFiles.length;
 
@@ -292,7 +400,8 @@
                         const compressed = await compressImage(file);
                         dt.items.add(compressed);
                     } catch (err) {
-                        dt.items.add(file); // 万が一エラーが起きたら圧縮せずにそのまま扱う
+                        console.error('画像圧縮エラー:', err);
+                        dt.items.add(file);
                     } finally {
                         remaining--;
                         ProgressIndicator.update(remaining, imageFiles.length); // 残り枚数を減らして帯の文字を変える
@@ -312,15 +421,33 @@
         e.target.files = dt.files;
         e.target.dataset.processed = 'true';
 
-        // FormBridgeへ「ファイルの準備が終わったこと」を伝達する
+        // ------------------------------------------------------------------------
+        // 【重要】オフラインモードの場合の分岐（FormBridgeを意図的に止める）
+        // ------------------------------------------------------------------------
+        if (isOfflineMode || !navigator.onLine) {
+            // 一時保存処理のみを実行
+            saveWithOfflineFiles();
+            // FormBridgeに通知(dispatchEvent)を行わずにここで強制終了するため、永遠のグルグルは起きません。
+            return;
+        }
+
+        // FormBridgeへ「ファイルの準備が終わったこと」を伝達する (これによりアップロード開始)
         e.target.dispatchEvent(new Event('change', { bubbles: true }));
+
+        // 通信遅延のキャッチ（8秒間監視して、まだ通信中なら警告を出す）
+        const spinnerCheckWrapper = wrapper;
+        setTimeout(() => {
+            if (isOfflineMode) return;
+            // fb-loading系やel-icon-loadingなどのスピナー表示が残っているか
+            const spinner = spinnerCheckWrapper.querySelector('.el-loading-mask, i.el-icon-loading');
+            if (spinner && spinner.style.display !== 'none') {
+                 alert('⚠️ 画像のアップロードに時間がかかっています。\nネットワーク環境が不安定な場合は、画面上部の「オフラインモード」をONにして一時保存のみ行うことをお勧めします。');
+            }
+        }, 8000);
 
         // 写真のセットからわずかに遅らせて、入力中のデータを全て一時保存（バックアップ）する
         setTimeout(() => {
-            const currentRecord = formBridge.fn.getRecord();
-            pendingSavePromise = dbOp.save(currentRecord).then(() => {
-                pendingSavePromise = null;
-            });
+            saveWithOfflineFiles();
         }, 500);
 
     }, true);
@@ -332,10 +459,7 @@
 
         // この関数が呼ばれると画面の今の状態がすべて保存される
         const saveHandler = () => {
-            const record = formBridge.fn.getRecord();
-            pendingSavePromise = dbOp.save(record).then(() => {
-                pendingSavePromise = null;
-            }).catch(() => { pendingSavePromise = null; });
+            saveWithOfflineFiles();
         };
 
         // 全部の入力欄に対し、「文字が打たれる・選ばれる」度に保存処理を行うよう監視をつける
@@ -344,11 +468,11 @@
             formBridge.events.on(`form.field.change.${s.code}`, saveHandler);
             formBridge.events.on(`form.kviewerLookup.selectRecord.${s.code}`, saveHandler);
 
-            // サブテーブル（表）の「行の追加」「行の削除」や、表の中の項目変更も監視する
+            // サブテーブルのイベント監視：「行の追加・削除・変更」も監視する
             if (s.type === 'SUBTABLE') {
                 formBridge.events.on(`form.subtable.addRow.${s.code}`, saveHandler);
                 formBridge.events.on(`form.subtable.removeRow.${s.code}`, saveHandler);
-                
+
                 if (s.tableFields) {
                     s.tableFields.forEach(ts => {
                         formBridge.events.on(`form.field.change.${s.code}.${ts.code}`, saveHandler);
@@ -360,7 +484,7 @@
     });
 
     // =========================================================================
-    // 8. ページ遷移・送信時（「確認」「回答」ボタンを押したとき）の安全措置
+    // 8. ページ遷移・送信時（「確認」「回答」ボタンを押したとき）の制御ロジック（安全措置）
     // =========================================================================
 
     // 「画像を圧縮している途中」や「保存処理中」に送信ボタンが押されたら、処理が終わるまで意図的に待たせる仕組み
@@ -393,11 +517,11 @@
 
             // 保存が終わったタイミングで、プログラム側から改めて送信ボタンを押す
             pendingSavePromise.then(() => {
-                formBridge.fn.emitSubmit(); 
+                formBridge.fn.emitSubmit();
             });
         }
     };
-    
+
     // どの画面からの送信時でもチェックを通す
     formBridge.events.on('form.submit', handleSubmit);
     formBridge.events.on('confirm.submit', handleSubmit);
