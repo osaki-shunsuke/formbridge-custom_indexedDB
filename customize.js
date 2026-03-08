@@ -36,6 +36,8 @@
     let isRestoring = false;
     // 「オフラインモード（アップロード停止・一時保存専用）」がONかどうか（リロードしても記憶させる）
     let isOfflineMode = localStorage.getItem('fb_offline_mode') === 'true';
+    // 不死身デーモンが監視するためのグローバルデータ（Vueに消されてもここから復活させる）
+    let daemonMonitoringData = [];
 
     // =========================================================================
     // 3. UI部品 (進捗インジケーター & モード切替ボタン)
@@ -56,19 +58,6 @@
 
             const btn = document.createElement('button');
             btn.id = 'fb-custom-offline-btn';
-            
-            const updateBtnUI = () => {
-                if (isOfflineMode) {
-                    btn.innerHTML = '✈️ オフライン(一時保存)モード<br><span style="font-size:11px;">(現在アップロード停止中)</span>';
-                    btn.style.backgroundColor = '#6c757d';
-                } else {
-                    btn.innerHTML = '🌐 オンラインモード<br><span style="font-size:11px;">(クリックで一時保存専用に切替)</span>';
-                    btn.style.backgroundColor = '#28a745';
-                }
-            };
-            
-            // 初期のUIセット
-            updateBtnUI();
 
             btn.style.cssText = `
                 color: #ffffff;
@@ -83,6 +72,19 @@
                 transition: all 0.3s;
                 line-height: 1.2;
             `;
+            
+            const updateBtnUI = () => {
+                if (isOfflineMode) {
+                    btn.innerHTML = '✈️ オフライン(一時保存)モード<br><span style="font-size:11px;">(現在アップロード停止中)</span>';
+                    btn.style.backgroundColor = '#6c757d';
+                } else {
+                    btn.innerHTML = '🌐 オンラインモード<br><span style="font-size:11px;">(クリックで一時保存専用に切替)</span>';
+                    btn.style.backgroundColor = '#28a745';
+                }
+            };
+            
+            // 初期のUIセット
+            updateBtnUI();
             
             // モード切替のクリック処理
             btn.onclick = (e) => {
@@ -331,6 +333,7 @@
         }
         
         recordToSave.__offline_files_data = offlineFilesData;
+        daemonMonitoringData = offlineFilesData; // デーモンにも最新状態を同期する
         
         pendingSavePromise = dbOp.save(recordToSave).then(() => {
             pendingSavePromise = null;
@@ -373,6 +376,13 @@
                 el.dataset.offlineHidden = '';
             });
             indicator.remove();
+
+            // 自らデーモンの監視対象から除外する
+            const fieldCode = wrapper.getAttribute('data-field-code');
+            const sameCodeWrappers = document.querySelectorAll(`[data-field-code="${fieldCode}"]`);
+            const wrapperIndex = Array.from(sameCodeWrappers).indexOf(wrapper);
+            daemonMonitoringData = daemonMonitoringData.filter(d => !(d.fieldCode === fieldCode && d.wrapperIndex === wrapperIndex));
+
             saveWithOfflineFiles();
         });
     };
@@ -416,6 +426,8 @@
                     
                     // 【追加】オフラインモード時に保存されたファイル画像たちを復元する
                     if (backup.__offline_files_data && backup.__offline_files_data.length > 0) {
+                        daemonMonitoringData = backup.__offline_files_data; // デーモンに記憶させる
+                        
                         // サブテーブルの行などが描画されるのを長めに待つ(1.5秒)
                         setTimeout(async () => {
                             for (const data of backup.__offline_files_data) {
@@ -594,14 +606,33 @@
     // 画面の監視（Vueの仮想DOM差分更新によって独自のUIが吹き飛ばされても必ず復活させるデーモン）
     setInterval(() => {
         if (!isOfflineMode) return;
-        const wrappers = document.querySelectorAll('[data-offline-restored="true"]');
-        wrappers.forEach(wrapper => {
-            if (!wrapper.querySelector('.fb-offline-indicator')) {
-                // DOMが初期化されてしまったら、ファイルが消えていないか再チェックする
-                const input = wrapper.querySelector('input[type="file"]');
-                if (input && input.files && input.files.length > 0) {
-                    const fileNames = Array.from(input.files).map(f => ({ name: f.name }));
-                    restoreUIForOfflineFile(wrapper, input, fileNames);
+        if (!daemonMonitoringData || daemonMonitoringData.length === 0) return;
+        
+        daemonMonitoringData.forEach(data => {
+            const sameCodeWrappers = document.querySelectorAll(`[data-field-code="${data.fieldCode}"]`);
+            const wrapper = sameCodeWrappers[data.wrapperIndex];
+            
+            if (wrapper) {
+                const indicator = wrapper.querySelector('.fb-offline-indicator');
+                if (!indicator) {
+                    // Vueの再描画でDOMが消えた場合、または未構築の場合、強制的に蘇生させる
+                    const input = wrapper.querySelector('input[type="file"]');
+                    if (input) {
+                        try {
+                            const dt = new DataTransfer();
+                            data.files.forEach(f => {
+                                const blob = base64ToBlob(f.data, f.type || 'image/jpeg');
+                                const fObj = new File([blob], f.name || 'image.jpg', { type: f.type || 'image/jpeg' });
+                                dt.items.add(fObj);
+                            });
+                            input.files = dt.files;
+                            input.dataset.processed = 'true';
+                            restoreUIForOfflineFile(wrapper, input, data.files);
+                            // console.log('👻 不死身デーモンがUIを復元しました');
+                        } catch(err) {
+                            console.error('Daemon restoration error:', err);
+                        }
+                    }
                 }
             }
         });
