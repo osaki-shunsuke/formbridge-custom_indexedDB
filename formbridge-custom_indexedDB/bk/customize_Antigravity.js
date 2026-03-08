@@ -1,4 +1,4 @@
-//Antigravity作成後に手動修正 2026/03/09
+//Antigravity作成 2026/03/09
 
 (function () {
     'use strict';
@@ -91,26 +91,14 @@
             // モード切替のクリック処理
             btn.onclick = (e) => {
                 e.preventDefault();
+                isOfflineMode = !isOfflineMode;
+                localStorage.setItem('fb_offline_mode', isOfflineMode); // 設定を保存
+                updateBtnUI();
 
-                // 次のモードがどちらになるか判定
-                const nextIsOnline = isOfflineMode; // 現在オフラインなら次はオンライン
-
-                if (nextIsOnline) {
-                    // 【オンラインに戻す場合】
-                    const confirmReload = confirm('【オンラインモードに戻します】\n未送信の画像をFormBridgeサーバーへアップロードするため、ページを再読み込み（リロード）します。よろしいですか？');
-
-                    if (confirmReload) {
-                        isOfflineMode = false;
-                        localStorage.setItem('fb_offline_mode', 'false');
-                        // ページを強制リロード
-                        location.reload();
-                    }
+                if (isOfflineMode) {
+                    alert('【オフラインモードをONにしました】\nこれ以降に添付された画像はFormBridgeへアップロードせず、すぐ裏側(IndexedDB)に保存して処理を終えます。\nネットワーク環境が回復したら、このボタンをオンラインに戻してページを再読み込みしてください。');
                 } else {
-                    // 【オフラインにする場合】
-                    isOfflineMode = true;
-                    localStorage.setItem('fb_offline_mode', 'true');
-                    updateBtnUI();
-                    alert('【オフラインモードをONにしました】\nこれ以降に添付された画像はFormBridgeへアップロードせず、すぐ裏側(IndexedDB)に保存して処理を終えます。ネットワーク接続が回復したら、このボタンをオンラインに戻してページを再読み込みしてください。');
+                    alert('【オンラインモードに戻しました】\n未送信の画像がある場合は、ページを再読み込み（リロード）することでアップロードを再開できます。');
                 }
             };
             wrapper.appendChild(btn);

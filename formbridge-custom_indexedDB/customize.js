@@ -1,5 +1,3 @@
-//Antigravity作成後に手動修正 2026/03/09
-
 (function () {
     'use strict';
 
@@ -50,7 +48,7 @@
         initOfflineButton() {
             if (document.getElementById('fb-custom-offline-btn')) return;
             const container = document.querySelector('.fb-custom--main') || document.body;
-
+            
             const wrapper = document.createElement('div');
             wrapper.style.cssText = `
                 display: flex;
@@ -74,7 +72,7 @@
                 transition: all 0.3s;
                 line-height: 1.2;
             `;
-
+            
             const updateBtnUI = () => {
                 if (isOfflineMode) {
                     btn.innerHTML = '✈️ オフライン(一時保存)モード<br><span style="font-size:11px;">(現在アップロード停止中)</span>';
@@ -84,33 +82,21 @@
                     btn.style.backgroundColor = '#28a745';
                 }
             };
-
+            
             // 初期のUIセット
             updateBtnUI();
-
+            
             // モード切替のクリック処理
             btn.onclick = (e) => {
                 e.preventDefault();
-
-                // 次のモードがどちらになるか判定
-                const nextIsOnline = isOfflineMode; // 現在オフラインなら次はオンライン
-
-                if (nextIsOnline) {
-                    // 【オンラインに戻す場合】
-                    const confirmReload = confirm('【オンラインモードに戻します】\n未送信の画像をFormBridgeサーバーへアップロードするため、ページを再読み込み（リロード）します。よろしいですか？');
-
-                    if (confirmReload) {
-                        isOfflineMode = false;
-                        localStorage.setItem('fb_offline_mode', 'false');
-                        // ページを強制リロード
-                        location.reload();
-                    }
+                isOfflineMode = !isOfflineMode;
+                localStorage.setItem('fb_offline_mode', isOfflineMode); // 設定を保存
+                updateBtnUI();
+                
+                if (isOfflineMode) {
+                    alert('【オフラインモードをONにしました】\nこれ以降に添付された画像はFormBridgeへアップロードせず、すぐ裏側(IndexedDB)に保存して処理を終えます。グルグル回ることはありません。\n電波が回復したら、このボタンをオンラインに戻してページを再読み込みしてください。');
                 } else {
-                    // 【オフラインにする場合】
-                    isOfflineMode = true;
-                    localStorage.setItem('fb_offline_mode', 'true');
-                    updateBtnUI();
-                    alert('【オフラインモードをONにしました】\nこれ以降に添付された画像はFormBridgeへアップロードせず、すぐ裏側(IndexedDB)に保存して処理を終えます。ネットワーク接続が回復したら、このボタンをオンラインに戻してページを再読み込みしてください。');
+                    alert('【オンラインモードに戻しました】\n未送信の画像がある場合は、ページを再読み込み（リロード）することでアップロードを再開できます。');
                 }
             };
             wrapper.appendChild(btn);
@@ -273,7 +259,7 @@
         });
     }
 
-
+ 
 
     // =========================================================================
     // 6. 画像圧縮ロジック
@@ -300,17 +286,17 @@
     // =========================================================================
     // 7. データ保存の補助関数 (IndexedDBと画面上のFile連携部分)
     // =========================================================================
-
+    
     // 特別な保存処理：FormBridgeの公式データだけでなく、現在画面に残っているがアップロード前である「ファイルの中身」もかき集めて保存する
     const saveWithOfflineFiles = async () => {
         if (isRestoring) return; // 復元処理が終わるまでは保存処理をブロックし、上書きを防止する
 
         const currentRecord = formBridge.fn.getRecord();
         const recordToSave = Object.assign({}, currentRecord);
-
+        
         const allFileInputs = document.querySelectorAll('input[type="file"]');
         const offlineFilesData = [...daemonMonitoringData]; // デーモンが記憶しているデータをベースにする
-
+        
         // ファイルをBase64文字列に変換する関数（絶対にデータが消えないようにするため）
         const getBase64 = (file) => new Promise((resolve) => {
             const reader = new FileReader();
@@ -325,11 +311,11 @@
             if (input.files && input.files.length > 0) {
                 const wrapper = input.closest('[data-field-code]');
                 if (!wrapper) continue;
-
+                
                 const fieldCode = wrapper.getAttribute('data-field-code');
                 const sameCodeWrappers = document.querySelectorAll(`[data-field-code="${fieldCode}"]`);
                 const wrapperIndex = Array.from(sameCodeWrappers).indexOf(wrapper);
-
+                
                 const fileDatas = [];
                 for (const file of Array.from(input.files)) {
                     const b64 = await getBase64(file);
@@ -337,7 +323,7 @@
                         fileDatas.push({ name: file.name, type: file.type, data: b64 });
                     }
                 }
-
+                
                 if (fileDatas.length > 0) {
                     const existingIndex = offlineFilesData.findIndex(d => d.fieldCode === fieldCode && d.wrapperIndex === wrapperIndex);
                     if (existingIndex !== -1) {
@@ -352,10 +338,10 @@
                 }
             }
         }
-
+        
         recordToSave.__offline_files_data = offlineFilesData;
         daemonMonitoringData = offlineFilesData; // デーモンにも最新状態を同期する
-
+        
         pendingSavePromise = dbOp.save(recordToSave).then(() => {
             pendingSavePromise = null;
         }).catch(() => { pendingSavePromise = null; });
@@ -365,7 +351,7 @@
     const restoreUIForOfflineFile = (wrapper, input, fileDataArray) => {
         // FormBridgeのVueがDOMを書き換えても残るよう、親要素に属性を付ける
         wrapper.setAttribute('data-offline-restored', 'true');
-
+        
         // デフォルト要素を隠す
         const hideTargets = wrapper.querySelectorAll('.el-upload, .fb-add-file, .fb-file-button, button.el-button, [type="button"]');
         hideTargets.forEach(el => {
@@ -374,7 +360,7 @@
                 el.dataset.offlineHidden = 'true';
             }
         });
-
+        
         // 古いメッセージ削除
         let indicator = wrapper.querySelector('.fb-offline-indicator');
         if (indicator) indicator.remove();
@@ -382,18 +368,18 @@
         indicator = document.createElement('div');
         indicator.className = 'fb-offline-indicator';
         indicator.style.cssText = 'background-color:#d4edda; color:#155724; padding:10px; border-radius:4px; margin-top:5px; border:1px solid #c3e6cb; font-size:14px; text-align: left; line-height: 1.5; z-index: 10;';
-
+        
         const fileNamesHtml = fileDataArray.map(f => `<div>📄 ${f.name}</div>`).join('');
         indicator.innerHTML = `✅ <b>オフライン一時保存済:</b><br>${fileNamesHtml}<br><button type="button" class="fb-offline-reset-btn" style="margin-top:8px; padding:4px 10px; font-size:12px; cursor:pointer; background:#fff; border:1px solid #aaa; border-radius:3px;">選び直す</button>`;
         wrapper.appendChild(indicator);
-
+        
         indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', (e) => {
             e.stopPropagation();
             input.value = '';
             input.dataset.processed = '';
             wrapper.removeAttribute('data-offline-restored');
             wrapper.querySelectorAll('[data-offline-hidden="true"]').forEach(el => {
-                el.style.display = '';
+                el.style.display = ''; 
                 el.dataset.offlineHidden = '';
             });
             indicator.remove();
@@ -427,7 +413,7 @@
     // ▼ 表示時：バックアップ（indexedDB）の復元とボタン設置
     formBridge.events.on('form.show', async (context) => {
         ProgressIndicator.initOfflineButton(); // 画面表示時にオフラインボタンを設置
-
+        
         if (backupRestored) return; // 復元確認は1回だけ行う
         backupRestored = true;
         isRestoring = true;
@@ -462,17 +448,17 @@
                             }
                         }
                     });
-
+                    
                     // 【追加】オフラインモード時に保存されたファイル画像たちを復元する
                     if (backup.__offline_files_data && backup.__offline_files_data.length > 0) {
                         daemonMonitoringData = backup.__offline_files_data; // デーモンに記憶させる
-
+                        
                         // サブテーブルの行などが描画されるのを長めに待つ(1.5秒)
                         setTimeout(async () => {
                             for (const data of backup.__offline_files_data) {
                                 const sameCodeWrappers = document.querySelectorAll(`[data-field-code="${data.fieldCode}"]`);
                                 const wrapper = sameCodeWrappers[data.wrapperIndex];
-
+                                
                                 // 当時の画面上の順番(DOM階層)と同じ位置のファイル入力欄に書き戻す
                                 if (wrapper) {
                                     const input = wrapper.querySelector('input[type="file"]');
@@ -487,18 +473,18 @@
                                             }
                                             input.files = dt.files;
                                             input.dataset.processed = 'true';
-
+                                            
                                             // オンラインかつ復元直後の場合はアップロードを試みる、ただしオフライン専用 UI を上書きするためオンラインでも UI ガードする
                                             if (!isOfflineMode && navigator.onLine) {
                                                 // 復元直後すぐに dispatchEvent すると Vue が追いつかず消えるので、確実に UI を一時保存化してから FormBridge に流す
-                                                restoreUIForOfflineFile(wrapper, input, data.files);
+                                                restoreUIForOfflineFile(wrapper, input, data.files); 
                                                 setTimeout(() => {
                                                     input.dispatchEvent(new Event('change', { bubbles: true }));
                                                 }, 100);
                                             } else {
                                                 restoreUIForOfflineFile(wrapper, input, data.files);
                                             }
-                                        } catch (err) {
+                                        } catch(err) {
                                             console.error('File object reconstruction error:', err);
                                         }
                                     }
@@ -521,7 +507,7 @@
             console.error('復元にかかわるエラー:', e);
             isRestoring = false;
         }
-
+        
         // FormBridgeへ書き換えた状態を返す(状態更新を反映させるため)
         return context;
     });
@@ -587,12 +573,12 @@
         if (isOfflineMode || !navigator.onLine) {
             // 一時保存処理のみを実行
             saveWithOfflineFiles();
-
+            
             // UI更新: ユーザーに一時保存完了が伝わるようにする
             if (wrapper) {
                 restoreUIForOfflineFile(wrapper, e.target, [{ name: e.target.files[0] ? e.target.files[0].name : '画像' }]);
             }
-
+            
             // FormBridgeに通知(dispatchEvent)を行わずにここで強制終了するため、永遠のグルグルは起きません。
             return;
         }
@@ -607,7 +593,7 @@
             // fb-loading系やel-icon-loadingなどのスピナー表示が残っているか
             const spinner = spinnerCheckWrapper.querySelector('.el-loading-mask, i.el-icon-loading');
             if (spinner && spinner.style.display !== 'none') {
-                alert('⚠️ 画像のアップロードに時間がかかっています。\nネットワーク環境が不安定な場合は、画面上部の「オフラインモード」をONにして一時保存のみ行うことをお勧めします。');
+                 alert('⚠️ 画像のアップロードに時間がかかっています。\nネットワーク環境が不安定な場合は、画面上部の「オフラインモード」をONにして一時保存のみ行うことをお勧めします。');
             }
         }, 8000);
 
@@ -653,11 +639,11 @@
     setInterval(() => {
         // オフラインモードに関わらず、デーモンの記憶にデータが残っていれば絶対にUIを維持する
         if (!daemonMonitoringData || daemonMonitoringData.length === 0) return;
-
+        
         daemonMonitoringData.forEach(data => {
             const sameCodeWrappers = document.querySelectorAll(`[data-field-code="${data.fieldCode}"]`);
             const wrapper = sameCodeWrappers[data.wrapperIndex];
-
+            
             if (wrapper) {
                 const indicator = wrapper.querySelector('.fb-offline-indicator');
                 if (!indicator) {
@@ -675,7 +661,7 @@
                             input.dataset.processed = 'true';
                             restoreUIForOfflineFile(wrapper, input, data.files);
                             // console.log('👻 不死身デーモンがUIを復元しました');
-                        } catch (err) {
+                        } catch(err) {
                             console.error('Daemon restoration error:', err);
                         }
                     }
