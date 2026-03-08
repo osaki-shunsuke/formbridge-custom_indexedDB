@@ -273,31 +273,47 @@
     // =========================================================================
     
     // 特別な保存処理：FormBridgeの公式データだけでなく、現在画面に残っているがアップロード前である「ファイルの中身」もかき集めて保存する
-    const saveWithOfflineFiles = () => {
+    const saveWithOfflineFiles = async () => {
         const currentRecord = formBridge.fn.getRecord();
         const recordToSave = Object.assign({}, currentRecord);
         
-        // 画面上に存在するすべてのファイル入力欄から情報を集める
         const allFileInputs = document.querySelectorAll('input[type="file"]');
         const offlineFilesData = [];
         
-        allFileInputs.forEach((input) => {
+        // ファイルをBase64文字列に変換する関数（絶対にデータが消えないようにするため）
+        const getBase64 = (file) => new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(file);
+        });
+
+        for (const input of Array.from(allFileInputs)) {
             if (input.files && input.files.length > 0) {
                 const wrapper = input.closest('[data-field-code]');
-                if (!wrapper) return;
+                if (!wrapper) continue;
                 
                 const fieldCode = wrapper.getAttribute('data-field-code');
-                // 同じ項目コードを持つ要素群（サブテーブル用）の中で何番目の行か
                 const sameCodeWrappers = document.querySelectorAll(`[data-field-code="${fieldCode}"]`);
                 const wrapperIndex = Array.from(sameCodeWrappers).indexOf(wrapper);
                 
-                offlineFilesData.push({
-                    fieldCode: fieldCode,
-                    wrapperIndex: wrapperIndex, // 階層の位置
-                    files: Array.from(input.files) // 画像データそのもの
-                });
+                const fileDatas = [];
+                for (const file of Array.from(input.files)) {
+                    const b64 = await getBase64(file);
+                    if (b64) {
+                        fileDatas.push({ name: file.name, type: file.type, data: b64 });
+                    }
+                }
+                
+                if (fileDatas.length > 0) {
+                    offlineFilesData.push({
+                        fieldCode: fieldCode,
+                        wrapperIndex: wrapperIndex,
+                        files: fileDatas
+                    });
+                }
             }
-        });
+        }
         
         recordToSave.__offline_files_data = offlineFilesData;
         
@@ -333,8 +349,8 @@
                     // 【追加】オフラインモード時に保存されたファイル画像たちを復元する
                     if (backup.__offline_files_data && backup.__offline_files_data.length > 0) {
                         // サブテーブルの行などが描画されるのを長めに待つ(1.5秒)
-                        setTimeout(() => {
-                            backup.__offline_files_data.forEach(data => {
+                        setTimeout(async () => {
+                            for (const data of backup.__offline_files_data) {
                                 const sameCodeWrappers = document.querySelectorAll(`[data-field-code="${data.fieldCode}"]`);
                                 const wrapper = sameCodeWrappers[data.wrapperIndex];
                                 
@@ -344,11 +360,13 @@
                                     if (input) {
                                         try {
                                             const dt = new DataTransfer();
-                                            data.files.forEach(f => {
-                                                // Blob/File情報を再構成
-                                                const fObj = f instanceof Blob ? f : new File([f], f.name || 'image.jpg', { type: f.type || 'image/jpeg' });
+                                            for (const f of data.files) {
+                                                // Base64からFileオブジェクトを再構成
+                                                const res = await fetch(f.data);
+                                                const blob = await res.blob();
+                                                const fObj = new File([blob], f.name || 'image.jpg', { type: f.type || 'image/jpeg' });
                                                 dt.items.add(fObj);
-                                            });
+                                            }
                                             input.files = dt.files;
                                             input.dataset.processed = 'true';
                                             
@@ -357,8 +375,12 @@
                                                 input.dispatchEvent(new Event('change', { bubbles: true }));
                                             } else {
                                                 // オフライン状態での復元ならUIを「一時保存済」状態に変える
-                                                const uploadDiv = wrapper.querySelector('.el-upload');
-                                                if (uploadDiv) uploadDiv.style.display = 'none';
+                                                wrapper.querySelectorAll('button').forEach(btn => {
+                                                    if (btn.textContent.includes('選択')) {
+                                                        const targetToHide = btn.closest('.el-upload') || btn;
+                                                        targetToHide.style.display = 'none';
+                                                    }
+                                                });
                                                 
                                                 let indicator = wrapper.querySelector('.fb-offline-indicator');
                                                 if (!indicator) {
@@ -371,7 +393,12 @@
                                                     indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
                                                         input.value = '';
                                                         input.dataset.processed = '';
-                                                        if (uploadDiv) uploadDiv.style.display = '';
+                                                        wrapper.querySelectorAll('button').forEach(btn => {
+                                                            if (btn.textContent.includes('選択')) {
+                                                                const targetToShow = btn.closest('.el-upload') || btn;
+                                                                targetToShow.style.display = '';
+                                                            }
+                                                        });
                                                         indicator.remove();
                                                         saveWithOfflineFiles();
                                                     });
@@ -382,7 +409,7 @@
                                         }
                                     }
                                 }
-                            });
+                            }
                         }, 1500); // UI構築待ち
                     }
 
@@ -459,8 +486,12 @@
             // UI更新: ユーザーに一時保存完了が伝わるようにする
             if (wrapper) {
                 // デフォルトの「ファイルを選択」要素ごと隠す
-                const uploadDiv = wrapper.querySelector('.el-upload');
-                if (uploadDiv) uploadDiv.style.display = 'none';
+                wrapper.querySelectorAll('button').forEach(btn => {
+                    if (btn.textContent.includes('選択')) {
+                        const targetToHide = btn.closest('.el-upload') || btn;
+                        targetToHide.style.display = 'none';
+                    }
+                });
                 
                 // 「一時保存済」表示をつける
                 let indicator = wrapper.querySelector('.fb-offline-indicator');
@@ -476,7 +507,12 @@
                     indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
                         e.target.value = '';
                         e.target.dataset.processed = '';
-                        if (uploadDiv) uploadDiv.style.display = ''; // ボタン復活
+                        wrapper.querySelectorAll('button').forEach(btn => {
+                            if (btn.textContent.includes('選択')) {
+                                const targetToShow = btn.closest('.el-upload') || btn;
+                                targetToShow.style.display = ''; // ボタン復活
+                            }
+                        });
                         indicator.remove();
                         saveWithOfflineFiles(); // クリア状態を上書き保存
                     });
