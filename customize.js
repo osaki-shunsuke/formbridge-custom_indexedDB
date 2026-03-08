@@ -32,6 +32,8 @@
     let isCompressing = false;
     // 「すでに一時保存データを復元したか？」を記録する場所（何度も聞かれないようにするため）
     let backupRestored = false;
+    // 「復旧処理中か？」を記録する場所（復元前に空のデータで上書き保存されるのを防ぐ）
+    let isRestoring = false;
     // 「オフラインモード（アップロード停止・一時保存専用）」がONかどうか
     let isOfflineMode = false;
 
@@ -274,6 +276,8 @@
     
     // 特別な保存処理：FormBridgeの公式データだけでなく、現在画面に残っているがアップロード前である「ファイルの中身」もかき集めて保存する
     const saveWithOfflineFiles = async () => {
+        if (isRestoring) return; // 復元処理が終わるまでは保存処理をブロックし、上書きを防止する
+
         const currentRecord = formBridge.fn.getRecord();
         const recordToSave = Object.assign({}, currentRecord);
         
@@ -332,6 +336,7 @@
         
         if (backupRestored) return; // 復元確認は1回だけ行う
         backupRestored = true;
+        isRestoring = true;
 
         try {
             const backup = await dbOp.load();
@@ -382,14 +387,22 @@
                                     }
                                 }
                             }
+                            isRestoring = false; // 復元の全工程が完了したら保存許可
                         }, 2500); // UI構築待ち(長めに待つ)
+                    } else {
+                        isRestoring = false;
                     }
 
                     console.log('✅ IndexedDBからデータを復元しました（サブテーブル含む）');
+                } else {
+                    isRestoring = false;
                 }
+            } else {
+                isRestoring = false;
             }
         } catch (e) {
             console.error('復元にかかわるエラー:', e);
+            isRestoring = false;
         }
     });
 
