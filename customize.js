@@ -46,6 +46,14 @@
     // 画面のトップに「📷画像を圧縮中... 残り X 枚」という青い帯を表示する仕組み
     // =========================================================================
     const ProgressIndicator = {
+        // 送信ボタンの表示・非表示を切り替えるメソッド
+        toggleSubmitButton(hide) {
+            // 通常画面の「確認」「送信」ボタンと、確認画面の「送信」ボタンをターゲットにする
+            const submitButtons = document.querySelectorAll('.fb-submit, .confirm-submit');
+            submitButtons.forEach(btn => {
+                btn.style.display = hide ? 'none' : '';
+            });
+        },
         // オフラインモード切替ボタンの作成
         initOfflineButton() {
             if (document.getElementById('fb-custom-offline-btn')) return;
@@ -57,7 +65,6 @@
                 justify-content: flex-end;
                 margin-bottom: 10px;
             `;
-
             const btn = document.createElement('button');
             btn.id = 'fb-custom-offline-btn';
 
@@ -110,6 +117,8 @@
                     isOfflineMode = true;
                     localStorage.setItem('fb_offline_mode', 'true');
                     updateBtnUI();
+                    // 送信ボタンを隠す
+                    ProgressIndicator.toggleSubmitButton(true);
                     alert('【オフラインモードをONにしました】\nこれ以降に添付された画像はFormBridgeへアップロードせず、すぐ裏側(IndexedDB)に保存して処理を終えます。ネットワーク接続が回復したら、このボタンをオンラインに戻してページを再読み込みしてください。');
                 }
             };
@@ -427,7 +436,10 @@
     // ▼ 表示時：バックアップ（indexedDB）の復元とボタン設置
     formBridge.events.on('form.show', async (context) => {
         ProgressIndicator.initOfflineButton(); // 画面表示時にオフラインボタンを設置
-
+        // 初期状態がオフラインならボタンを隠す
+        if (isOfflineMode) {
+            ProgressIndicator.toggleSubmitButton(true);
+        }
         if (backupRestored) return; // 復元確認は1回だけ行う
         backupRestored = true;
         isRestoring = true;
@@ -651,6 +663,10 @@
 
     // 画面の監視（Vueの仮想DOM差分更新によって独自のUIが吹き飛ばされても必ず復活させるデーモン）
     setInterval(() => {
+        // オフラインモードなら、常に送信ボタンを隠し続ける
+        if (isOfflineMode) {
+            ProgressIndicator.toggleSubmitButton(true);
+        }
         // オフラインモードに関わらず、デーモンの記憶にデータが残っていれば絶対にUIを維持する
         if (!daemonMonitoringData || daemonMonitoringData.length === 0) return;
 
