@@ -374,34 +374,7 @@
                                             if (!isOfflineMode && navigator.onLine) {
                                                 input.dispatchEvent(new Event('change', { bubbles: true }));
                                             } else {
-                                                // オフライン状態での復元ならUIを「一時保存済」状態に変える
-                                                const hideTargets = wrapper.querySelectorAll('.el-upload, .fb-add-file, .fb-file-button, button.el-button');
-                                                hideTargets.forEach(el => {
-                                                    if (!el.classList.contains('fb-offline-reset-btn')) {
-                                                        el.style.display = 'none';
-                                                        el.dataset.offlineHidden = 'true';
-                                                    }
-                                                });
-                                                
-                                                let indicator = wrapper.querySelector('.fb-offline-indicator');
-                                                if (!indicator) {
-                                                    indicator = document.createElement('div');
-                                                    indicator.className = 'fb-offline-indicator';
-                                                    indicator.style.cssText = 'background-color:#d4edda; color:#155724; padding:10px; border-radius:4px; margin-top:5px; border:1px solid #c3e6cb; font-size:14px;';
-                                                    indicator.innerHTML = `✅ <b>一時保存済:</b> ${input.files[0] ? input.files[0].name : '画像'}<br><button type="button" class="fb-offline-reset-btn" style="margin-top:5px; padding:3px 8px; font-size:12px; cursor:pointer;">選び直す</button>`;
-                                                    wrapper.appendChild(indicator);
-                                                    
-                                                    indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
-                                                        input.value = '';
-                                                        input.dataset.processed = '';
-                                                        wrapper.querySelectorAll('[data-offline-hidden="true"]').forEach(el => {
-                                                            el.style.display = '';
-                                                            el.dataset.offlineHidden = '';
-                                                        });
-                                                        indicator.remove();
-                                                        saveWithOfflineFiles();
-                                                    });
-                                                }
+                                                restoreUIForOfflineFile(wrapper, input, data.files);
                                             }
                                         } catch(err) {
                                             console.error('File object reconstruction error:', err);
@@ -409,7 +382,7 @@
                                     }
                                 }
                             }
-                        }, 1500); // UI構築待ち
+                        }, 2500); // UI構築待ち(長めに待つ)
                     }
 
                     console.log('✅ IndexedDBからデータを復元しました（サブテーブル含む）');
@@ -484,37 +457,7 @@
             
             // UI更新: ユーザーに一時保存完了が伝わるようにする
             if (wrapper) {
-                // デフォルトの「ファイルを選択」関連要素を包括的に隠す
-                const hideTargets = wrapper.querySelectorAll('.el-upload, .fb-add-file, .fb-file-button, button.el-button');
-                hideTargets.forEach(el => {
-                    if (!el.classList.contains('fb-offline-reset-btn')) {
-                        el.style.display = 'none';
-                        el.dataset.offlineHidden = 'true';
-                    }
-                });
-                
-                // 「一時保存済」表示をつける
-                let indicator = wrapper.querySelector('.fb-offline-indicator');
-                if (!indicator) {
-                    indicator = document.createElement('div');
-                    indicator.className = 'fb-offline-indicator';
-                    indicator.style.cssText = 'background-color:#d4edda; color:#155724; padding:10px; border-radius:4px; margin-top:5px; border:1px solid #c3e6cb; font-size:14px;';
-                    const fileName = e.target.files[0] ? e.target.files[0].name : '画像';
-                    indicator.innerHTML = `✅ <b>オフライン一時保存済:</b> ${fileName}<br><button type="button" class="fb-offline-reset-btn" style="margin-top:5px; padding:3px 8px; font-size:12px; cursor:pointer;">選び直す</button>`;
-                    wrapper.appendChild(indicator);
-                    
-                    // 「選び直す」ボタンの挙動
-                    indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
-                        e.target.value = '';
-                        e.target.dataset.processed = '';
-                        wrapper.querySelectorAll('[data-offline-hidden="true"]').forEach(el => {
-                            el.style.display = '';
-                            el.dataset.offlineHidden = '';
-                        });
-                        indicator.remove();
-                        saveWithOfflineFiles(); // クリア状態を上書き保存
-                    });
-                }
+                restoreUIForOfflineFile(wrapper, e.target, [{ name: e.target.files[0] ? e.target.files[0].name : '画像' }]);
             }
             
             // FormBridgeに通知(dispatchEvent)を行わずにここで強制終了するため、永遠のグルグルは起きません。
