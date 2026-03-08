@@ -282,7 +282,45 @@
     }
 
     // =========================================================================
-    // 7. FormBridge イベント連携（自動保存・復元を行うタイミングの設定）
+    // 7. データ保存の補助関数 (IndexedDBと画面上のFile連携部分)
+    // =========================================================================
+    
+    // 特別な保存処理：FormBridgeの公式データだけでなく、現在画面に残っているがアップロード前である「ファイルの中身」もかき集めて保存する
+    const saveWithOfflineFiles = () => {
+        const currentRecord = formBridge.fn.getRecord();
+        const recordToSave = Object.assign({}, currentRecord);
+        
+        // 画面上に存在するすべてのファイル入力欄から情報を集める
+        const allFileInputs = document.querySelectorAll('input[type="file"]');
+        const offlineFilesData = [];
+        
+        allFileInputs.forEach((input) => {
+            if (input.files && input.files.length > 0) {
+                const wrapper = input.closest('[data-field-code]');
+                if (!wrapper) return;
+                
+                const fieldCode = wrapper.getAttribute('data-field-code');
+                // 同じ項目コードを持つ要素群（サブテーブル用）の中で何番目の行か
+                const sameCodeWrappers = document.querySelectorAll(`[data-field-code="${fieldCode}"]`);
+                const wrapperIndex = Array.from(sameCodeWrappers).indexOf(wrapper);
+                
+                offlineFilesData.push({
+                    fieldCode: fieldCode,
+                    wrapperIndex: wrapperIndex, // 階層の位置
+                    files: Array.from(input.files) // 画像データそのもの
+                });
+            }
+        });
+        
+        recordToSave.__offline_files_data = offlineFilesData;
+        
+        pendingSavePromise = dbOp.save(recordToSave).then(() => {
+            pendingSavePromise = null;
+        }).catch(() => { pendingSavePromise = null; });
+    };
+
+    // =========================================================================
+    // 8. FormBridge イベント連携（自動保存・復元を行うタイミングの設定）
     // =========================================================================
 
     // ▼ 表示時：バックアップ（indexedDB）の復元とボタン設置
@@ -309,25 +347,58 @@
                     
                     // 【追加】オフラインモード時に保存されたファイル画像たちを復元する
                     if (backup.__offline_files_data && backup.__offline_files_data.length > 0) {
-                        // サブテーブルの行などが描画されるのを少し待つ
+                        // サブテーブルの行などが描画されるのを長めに待つ(1.5秒)
                         setTimeout(() => {
-                            const allFileInputs = document.querySelectorAll('input[type="file"]');
                             backup.__offline_files_data.forEach(data => {
-                                const input = allFileInputs[data.inputIndex];
+                                const sameCodeWrappers = document.querySelectorAll(`[data-field-code="${data.fieldCode}"]`);
+                                const wrapper = sameCodeWrappers[data.wrapperIndex];
+                                
                                 // 当時の画面上の順番(DOM階層)と同じ位置のファイル入力欄に書き戻す
-                                if (input) {
-                                    const dt = new DataTransfer();
-                                    data.files.forEach(f => dt.items.add(f));
-                                    input.files = dt.files;
-                                    input.dataset.processed = 'true';
-                                    
-                                    // 復元完了時にオンラインであれば、FormBridgeに「ファイルが入ったよ」と通知してアップロードさせる
-                                    if (!isOfflineMode && navigator.onLine) {
-                                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                                if (wrapper) {
+                                    const input = wrapper.querySelector('input[type="file"]');
+                                    if (input) {
+                                        try {
+                                            const dt = new DataTransfer();
+                                            data.files.forEach(f => {
+                                                // Blob/File情報を再構成
+                                                const fObj = f instanceof Blob ? f : new File([f], f.name || 'image.jpg', { type: f.type || 'image/jpeg' });
+                                                dt.items.add(fObj);
+                                            });
+                                            input.files = dt.files;
+                                            input.dataset.processed = 'true';
+                                            
+                                            // 復元完了時にオンラインであれば、FormBridgeに「ファイルが入ったよ」と通知してアップロードさせる
+                                            if (!isOfflineMode && navigator.onLine) {
+                                                input.dispatchEvent(new Event('change', { bubbles: true }));
+                                            } else {
+                                                // オフライン状態での復元ならUIを「一時保存済」状態に変える
+                                                const addFileBtn = wrapper.querySelector('.fb-add-file');
+                                                if (addFileBtn) addFileBtn.style.display = 'none';
+                                                
+                                                let indicator = wrapper.querySelector('.fb-offline-indicator');
+                                                if (!indicator) {
+                                                    indicator = document.createElement('div');
+                                                    indicator.className = 'fb-offline-indicator';
+                                                    indicator.style.cssText = 'background-color:#d4edda; color:#155724; padding:10px; border-radius:4px; margin-top:5px; border:1px solid #c3e6cb; font-size:14px;';
+                                                    indicator.innerHTML = `✅ <b>一時保存済:</b> ${input.files[0] ? input.files[0].name : '画像'}<br><button type="button" class="fb-offline-reset-btn" style="margin-top:5px; padding:3px 8px; font-size:12px; cursor:pointer;">選び直す</button>`;
+                                                    wrapper.appendChild(indicator);
+                                                    
+                                                    indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
+                                                        input.value = '';
+                                                        input.dataset.processed = '';
+                                                        if (addFileBtn) addFileBtn.style.display = '';
+                                                        indicator.remove();
+                                                        saveWithOfflineFiles();
+                                                    });
+                                                }
+                                            }
+                                        } catch(err) {
+                                            console.error('File object reconstruction error:', err);
+                                        }
                                     }
                                 }
                             });
-                        }, 1000); // UI構築待ちで1秒待機
+                        }, 1500); // UI構築待ち
                     }
 
                     console.log('✅ IndexedDBからデータを復元しました（サブテーブル含む）');
@@ -337,34 +408,6 @@
             console.error('復元にかかわるエラー:', e);
         }
     });
-
-    // 特別な保存処理：FormBridgeの公式データだけでなく、現在画面に残っているがアップロード前である「ファイルの中身」もかき集めて保存する
-    const saveWithOfflineFiles = () => {
-        const currentRecord = formBridge.fn.getRecord();
-        const recordToSave = Object.assign({}, currentRecord);
-        
-        // 画面上に存在するすべてのファイル入力欄から情報を集める
-        const allFileInputs = document.querySelectorAll('input[type="file"]');
-        const offlineFilesData = [];
-        
-        allFileInputs.forEach((input, index) => {
-            if (input.files && input.files.length > 0) {
-                const wrapper = input.closest('[data-field-code]');
-                const fieldCode = wrapper ? wrapper.getAttribute('data-field-code') : 'unknown';
-                offlineFilesData.push({
-                    inputIndex: index, // DOM上での順番
-                    fieldCode: fieldCode,
-                    files: Array.from(input.files) // 画像データそのもの
-                });
-            }
-        });
-        
-        recordToSave.__offline_files_data = offlineFilesData;
-        
-        pendingSavePromise = dbOp.save(recordToSave).then(() => {
-            pendingSavePromise = null;
-        }).catch(() => { pendingSavePromise = null; });
-    };
 
     // ▼ 写真が選択された時：まず画像を圧縮して、その後に一時保存する
     document.addEventListener('change', async function (e) {
@@ -427,6 +470,34 @@
         if (isOfflineMode || !navigator.onLine) {
             // 一時保存処理のみを実行
             saveWithOfflineFiles();
+            
+            // UI更新: ユーザーに一時保存完了が伝わるようにする
+            if (wrapper) {
+                // デフォルトの「ファイルを選択」ボタンを隠す
+                const addFileBtn = wrapper.querySelector('.fb-add-file');
+                if (addFileBtn) addFileBtn.style.display = 'none';
+                
+                // 「一時保存済」表示をつける
+                let indicator = wrapper.querySelector('.fb-offline-indicator');
+                if (!indicator) {
+                    indicator = document.createElement('div');
+                    indicator.className = 'fb-offline-indicator';
+                    indicator.style.cssText = 'background-color:#d4edda; color:#155724; padding:10px; border-radius:4px; margin-top:5px; border:1px solid #c3e6cb; font-size:14px;';
+                    const fileName = e.target.files[0] ? e.target.files[0].name : '画像';
+                    indicator.innerHTML = `✅ <b>オフライン一時保存済:</b> ${fileName}<br><button type="button" class="fb-offline-reset-btn" style="margin-top:5px; padding:3px 8px; font-size:12px; cursor:pointer;">選び直す</button>`;
+                    wrapper.appendChild(indicator);
+                    
+                    // 「選び直す」ボタンの挙動
+                    indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
+                        e.target.value = '';
+                        e.target.dataset.processed = '';
+                        if (addFileBtn) addFileBtn.style.display = ''; // ボタン復活
+                        indicator.remove();
+                        saveWithOfflineFiles(); // クリア状態を上書き保存
+                    });
+                }
+            }
+            
             // FormBridgeに通知(dispatchEvent)を行わずにここで強制終了するため、永遠のグルグルは起きません。
             return;
         }
