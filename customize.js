@@ -326,6 +326,40 @@
         }).catch(() => { pendingSavePromise = null; });
     };
 
+    // 画像復元処理のヘルパー関数（リロード時の復元と、「選び直す」時のリセットに使う）
+    const restoreUIForOfflineFile = (wrapper, input, fileDataArray) => {
+        // UIを「一時保存済」状態に変える。親や兄弟にあるすべてのアップロードボタン要素を隠す
+        const hideTargets = wrapper.querySelectorAll('.el-upload, .fb-add-file, .fb-file-button, button.el-button, [type="button"]');
+        hideTargets.forEach(el => {
+            if (!el.classList.contains('fb-offline-reset-btn') && !el.classList.contains('fb-remove-row-btn')) {
+                el.style.display = 'none';
+                el.dataset.offlineHidden = 'true';
+            }
+        });
+        
+        // 古いメッセージがあれば削除
+        let indicator = wrapper.querySelector('.fb-offline-indicator');
+        if (indicator) indicator.remove();
+
+        indicator = document.createElement('div');
+        indicator.className = 'fb-offline-indicator';
+        indicator.style.cssText = 'background-color:#d4edda; color:#155724; padding:10px; border-radius:4px; margin-top:5px; border:1px solid #c3e6cb; font-size:14px; text-align: left; line-height: 1.5;';
+        const fileNamesHtml = fileDataArray.map(f => `<div>📄 ${f.name}</div>`).join('');
+        indicator.innerHTML = `✅ <b>オフライン一時保存済:</b><br>${fileNamesHtml}<br><button type="button" class="fb-offline-reset-btn" style="margin-top:8px; padding:4px 10px; font-size:12px; cursor:pointer; background:#fff; border:1px solid #aaa; border-radius:3px;">選び直す</button>`;
+        wrapper.appendChild(indicator);
+        
+        indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
+            input.value = '';
+            input.dataset.processed = '';
+            wrapper.querySelectorAll('[data-offline-hidden="true"]').forEach(el => {
+                el.style.display = ''; // ボタン復活
+                el.dataset.offlineHidden = '';
+            });
+            indicator.remove();
+            saveWithOfflineFiles();
+        });
+    };
+
     // =========================================================================
     // 8. FormBridge イベント連携（自動保存・復元を行うタイミングの設定）
     // =========================================================================
