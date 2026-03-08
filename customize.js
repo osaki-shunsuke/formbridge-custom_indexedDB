@@ -375,10 +375,11 @@
                                                 input.dispatchEvent(new Event('change', { bubbles: true }));
                                             } else {
                                                 // オフライン状態での復元ならUIを「一時保存済」状態に変える
-                                                wrapper.querySelectorAll('button').forEach(btn => {
-                                                    if (btn.textContent.includes('選択')) {
-                                                        const targetToHide = btn.closest('.el-upload') || btn;
-                                                        targetToHide.style.display = 'none';
+                                                const hideTargets = wrapper.querySelectorAll('.el-upload, .fb-add-file, .fb-file-button, button.el-button');
+                                                hideTargets.forEach(el => {
+                                                    if (!el.classList.contains('fb-offline-reset-btn')) {
+                                                        el.style.display = 'none';
+                                                        el.dataset.offlineHidden = 'true';
                                                     }
                                                 });
                                                 
@@ -393,11 +394,9 @@
                                                     indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
                                                         input.value = '';
                                                         input.dataset.processed = '';
-                                                        wrapper.querySelectorAll('button').forEach(btn => {
-                                                            if (btn.textContent.includes('選択')) {
-                                                                const targetToShow = btn.closest('.el-upload') || btn;
-                                                                targetToShow.style.display = '';
-                                                            }
+                                                        wrapper.querySelectorAll('[data-offline-hidden="true"]').forEach(el => {
+                                                            el.style.display = '';
+                                                            el.dataset.offlineHidden = '';
                                                         });
                                                         indicator.remove();
                                                         saveWithOfflineFiles();
@@ -485,11 +484,12 @@
             
             // UI更新: ユーザーに一時保存完了が伝わるようにする
             if (wrapper) {
-                // デフォルトの「ファイルを選択」要素ごと隠す
-                wrapper.querySelectorAll('button').forEach(btn => {
-                    if (btn.textContent.includes('選択')) {
-                        const targetToHide = btn.closest('.el-upload') || btn;
-                        targetToHide.style.display = 'none';
+                // デフォルトの「ファイルを選択」関連要素を包括的に隠す
+                const hideTargets = wrapper.querySelectorAll('.el-upload, .fb-add-file, .fb-file-button, button.el-button');
+                hideTargets.forEach(el => {
+                    if (!el.classList.contains('fb-offline-reset-btn')) {
+                        el.style.display = 'none';
+                        el.dataset.offlineHidden = 'true';
                     }
                 });
                 
@@ -507,11 +507,9 @@
                     indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', () => {
                         e.target.value = '';
                         e.target.dataset.processed = '';
-                        wrapper.querySelectorAll('button').forEach(btn => {
-                            if (btn.textContent.includes('選択')) {
-                                const targetToShow = btn.closest('.el-upload') || btn;
-                                targetToShow.style.display = ''; // ボタン復活
-                            }
+                        wrapper.querySelectorAll('[data-offline-hidden="true"]').forEach(el => {
+                            el.style.display = '';
+                            el.dataset.offlineHidden = '';
                         });
                         indicator.remove();
                         saveWithOfflineFiles(); // クリア状態を上書き保存
