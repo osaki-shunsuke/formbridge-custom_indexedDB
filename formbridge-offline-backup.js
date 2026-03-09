@@ -271,8 +271,9 @@
             let backup = await dbOp.load();
             
             // 課題1: 古いバックアップデータの自動クリーンアップ (テスト用に30秒に短縮中)
-            if (backup && backup.__timestamp && Date.now() - backup.__timestamp > 30 * 1000) {
-                console.log('🚮 古いバックアップ(7日以上経過)を自動破棄しました。');
+            // タイムスタンプが存在しない過去のデータも古すぎるとみなして破棄します
+            if (backup && (!backup.__timestamp || Date.now() - backup.__timestamp > 30 * 1000)) {
+                console.log('🚮 古いバックアップ(30秒以上経過)を自動破棄しました。');
                 await dbOp.clear();
                 backup = null;
             }
@@ -373,13 +374,22 @@
         if (isConfirm && pendingSavePromise) return alert('💾 バックアップ保存中です。数秒待ってから再度お試しください。') || (ctx.preventDefault(), true);
         return false;
     };
-    formBridge.events.on('form.confirm', ctx => stopIfProcessing(ctx, true));
+    formBridge.events.on('form.confirm', ctx => {
+        stopIfProcessing(ctx, true);
+        return ctx; // FormBridgeの仕様上、フック内で必ずcontextを返す必要があります
+    });
     
     const handleSubmit = ctx => {
-        if (stopIfProcessing(ctx)) return;
+        if (stopIfProcessing(ctx)) return ctx;
         if (pendingSavePromise) { ctx.preventDefault(); pendingSavePromise.then(() => formBridge.fn.emitSubmit()); }
+        return ctx; // FormBridgeの仕様上、フック内で必ずcontextを返す必要があります
     };
     ['form.submit', 'confirm.submit'].forEach(ev => formBridge.events.on(ev, handleSubmit));
-    ['form.submitted', 'confirm.submitted'].forEach(ev => formBridge.events.on(ev, () => dbOp.clear()));
+    
+    // ▼ 送信が完全に終わったらバックアップデータを削除
+    ['form.submitted', 'confirm.submitted'].forEach(ev => formBridge.events.on(ev, async (ctx) => {
+        await dbOp.clear();
+        return ctx; // submittedイベントは非同期ですが、確実にcontextを返す構成にします
+    }));
 
 })();
