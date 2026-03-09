@@ -1,0 +1,36 @@
+# 環境変数ファイル（フォームURLやAPIキーなどの機密情報を書くファイル）
+.env
+.env.*
+.env.local
+
+# 機密情報が含まれる可能性のあるメモファイル
+secret.txt
+memo.txt
+urls.txt
+
+# 依存関係
+node_modules/
+
+# ログファイル
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# OSのシステムファイル
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# エディタやIDEの設定ファイル
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

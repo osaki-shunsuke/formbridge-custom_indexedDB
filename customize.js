@@ -53,6 +53,17 @@
             submitButtons.forEach(btn => {
                 btn.style.display = hide ? 'none' : '';
             });
+
+            // READMEの方針通り、テキストが「回答」「確認」「送信」のボタンも堅牢に隠す
+            // <span>タグの内部にテキストがあるケースにも対応できるよう、span要素も含めて検知
+            const allElements = document.querySelectorAll('button, a.el-button, .el-button, span');
+            allElements.forEach(el => {
+                const text = el.textContent.trim();
+                if (text === '回答' || text === '確認' || text === '送信') {
+                    const target = el.closest('button') || el.closest('a') || el.closest('.el-button') || el;
+                    target.style.display = hide ? 'none' : '';
+                }
+            });
         },
         // オフラインモード切替ボタンの作成
         initOfflineButton() {
