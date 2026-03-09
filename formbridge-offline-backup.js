@@ -130,7 +130,7 @@
         },
         update(remaining, total) {
             const el = document.getElementById('fb-custom-progress');
-            if (el) el.textContent = \`📷 画像を圧縮中... 残り \${remaining} 枚 / 全 \${total} 枚\`;
+            if (el) el.textContent = `📷 画像を圧縮中... 残り ${remaining} 枚 / 全 ${total} 枚`;
         },
         hide() {
             const el = document.getElementById('fb-custom-progress');
@@ -192,7 +192,7 @@
             if (input.files?.length > 0) {
                 const wrapper = input.closest('[data-field-code]');
                 if (!wrapper) continue;
-                const fieldCode = wrapper.dataset.fieldCode, wrapperIndex = Array.from(document.querySelectorAll(\`[data-field-code="\${fieldCode}"]\`)).indexOf(wrapper);
+                const fieldCode = wrapper.dataset.fieldCode, wrapperIndex = Array.from(document.querySelectorAll(`[data-field-code="${fieldCode}"]`)).indexOf(wrapper);
                 
                 const fileDatas = (await Promise.all(Array.from(input.files).map(async f => {
                     const data = await getBase64(f);
@@ -206,6 +206,7 @@
                 }
             }
         }
+        recordToSave.__timestamp = Date.now(); // 課題1: 保存日時を記録
         daemonMonitoringData = recordToSave.__offline_files_data = offlineFilesData;
         pendingSavePromise = dbOp.save(recordToSave).finally(() => pendingSavePromise = null);
     };
@@ -218,7 +219,7 @@
         wrapper.querySelector('.fb-offline-indicator')?.remove();
         const indicator = document.createElement('div');
         indicator.className = 'fb-offline-indicator';
-        indicator.innerHTML = \`✅ <b>オフライン一時保存済:</b><br>\${fileDataArray.map(f => \`<div>📄 \${f.name}</div>\`).join('')}<br><button type="button" class="fb-offline-reset-btn">選び直す</button>\`;
+        indicator.innerHTML = `✅ <b>オフライン一時保存済:</b><br>${fileDataArray.map(f => `<div>📄 ${f.name}</div>`).join('')}<br><button type="button" class="fb-offline-reset-btn">選び直す</button>`;
         wrapper.appendChild(indicator);
 
         indicator.querySelector('.fb-offline-reset-btn').addEventListener('click', e => {
@@ -228,23 +229,54 @@
             wrapper.querySelectorAll('[data-offline-hidden="true"]').forEach(el => (el.style.display = '', el.dataset.offlineHidden = ''));
             indicator.remove();
             
-            const fieldCode = wrapper.dataset.fieldCode, idx = Array.from(document.querySelectorAll(\`[data-field-code="\${fieldCode}"]\`)).indexOf(wrapper);
+            const fieldCode = wrapper.dataset.fieldCode, idx = Array.from(document.querySelectorAll(`[data-field-code="${fieldCode}"]`)).indexOf(wrapper);
             daemonMonitoringData = daemonMonitoringData.filter(d => !(d.fieldCode === fieldCode && d.wrapperIndex === idx));
             saveWithOfflineFiles();
         });
     };
 
     // =========================================================================
-    // 8. FormBridge イベント連携
+    // 8. UX向上・堅牢性強化 (ネットワーク検知 / 容量事前チェック)
+    // =========================================================================
+    // 課題2: ネットワーク復帰検知
+    window.addEventListener('online', () => {
+        if (isOfflineMode) alert('📡 電波が回復し、オンライン状態に復帰しました！\\n未送信データを送信するには、上部ボタンからオンラインモードに戻してください。');
+    });
+
+    // 課題3: 容量事前チェック
+    const checkStorageQuota = async () => {
+        if (navigator.storage?.estimate) {
+            try {
+                const { usage, quota } = await navigator.storage.estimate();
+                if (quota && usage) {
+                    const remainingMb = (quota - usage) / (1024 * 1024);
+                    // 残り50MB以下で警告
+                    if (remainingMb > 0 && remainingMb < 50) alert(`⚠️ 端末の空き容量がわずかです（推定残り ${Math.round(remainingMb)}MB）。\n大きな画像を複数アップロードすると保存エラーになる可能性があります。`);
+                }
+            } catch (err) { console.warn('Storage check error:', err); }
+        }
+    };
+
+    // =========================================================================
+    // 9. FormBridge イベント連携
     // =========================================================================
     formBridge.events.on('form.show', async (context) => {
+        checkStorageQuota(); // 画面表示時に容量をチェック
         ProgressIndicator.initOfflineButton();
         if (isOfflineMode) ProgressIndicator.toggleSubmitButton(true);
         if (backupRestored) return;
         backupRestored = isRestoring = true;
 
         try {
-            const backup = await dbOp.load();
+            let backup = await dbOp.load();
+            
+            // 課題1: 古いバックアップデータの自動クリーンアップ (7日以上前)
+            if (backup && backup.__timestamp && Date.now() - backup.__timestamp > 7 * 24 * 60 * 60 * 1000) {
+                console.log('🚮 古いバックアップ(7日以上経過)を自動破棄しました。');
+                await dbOp.clear();
+                backup = null;
+            }
+
             if (backup && Object.keys(backup).length && confirm('未送信の一時保存データが見つかりました。\\n前回入力していた内容や画像を復元しますか？')) {
                 Object.keys(backup).forEach(key => {
                     if (key === '__offline_files_data' || !backup[key] || backup[key].type === 'FILE') return;
@@ -256,7 +288,7 @@
                     daemonMonitoringData = backup.__offline_files_data;
                     setTimeout(() => {
                         backup.__offline_files_data.forEach(data => {
-                            const wrapper = document.querySelectorAll(\`[data-field-code="\${data.fieldCode}"]\`)[data.wrapperIndex];
+                            const wrapper = document.querySelectorAll(`[data-field-code="${data.fieldCode}"]`)[data.wrapperIndex];
                             const input = wrapper?.querySelector('input[type="file"]');
                             if (input) {
                                 try {
@@ -316,7 +348,7 @@
             ['form.field.change.', 'form.kviewerLookup.selectRecord.'].forEach(ev => formBridge.events.on(ev + s.code, saveWithOfflineFiles));
             if (s.type === 'SUBTABLE') {
                 ['form.subtable.addRow.', 'form.subtable.removeRow.'].forEach(ev => formBridge.events.on(ev + s.code, saveWithOfflineFiles));
-                s.tableFields?.forEach(ts => ['form.field.change.', 'form.kviewerLookup.selectRecord.'].forEach(ev => formBridge.events.on(ev + \`\${s.code}.\${ts.code}\`, saveWithOfflineFiles)));
+                s.tableFields?.forEach(ts => ['form.field.change.', 'form.kviewerLookup.selectRecord.'].forEach(ev => formBridge.events.on(ev + `${s.code}.${ts.code}`, saveWithOfflineFiles)));
             }
         });
     });
@@ -325,7 +357,7 @@
         if (isOfflineMode) ProgressIndicator.toggleSubmitButton(true);
         if (!daemonMonitoringData?.length) return;
         daemonMonitoringData.forEach(data => {
-            const wrapper = document.querySelectorAll(\`[data-field-code="\${data.fieldCode}"]\`)[data.wrapperIndex];
+            const wrapper = document.querySelectorAll(`[data-field-code="${data.fieldCode}"]`)[data.wrapperIndex];
             if (wrapper && !wrapper.querySelector('.fb-offline-indicator')) {
                 const input = wrapper.querySelector('input[type="file"]');
                 if (input) {
