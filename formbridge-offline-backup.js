@@ -270,8 +270,8 @@
         try {
             let backup = await dbOp.load();
             
-            // 課題1: 古いバックアップデータの自動クリーンアップ (7日以上前)
-            if (backup && backup.__timestamp && Date.now() - backup.__timestamp > 7 * 24 * 60 * 60 * 1000) {
+            // 課題1: 古いバックアップデータの自動クリーンアップ (テスト用に30秒に短縮中)
+            if (backup && backup.__timestamp && Date.now() - backup.__timestamp > 30 * 1000) {
                 console.log('🚮 古いバックアップ(7日以上経過)を自動破棄しました。');
                 await dbOp.clear();
                 backup = null;
