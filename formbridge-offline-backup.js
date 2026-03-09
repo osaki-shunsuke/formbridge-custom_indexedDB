@@ -264,7 +264,7 @@
         checkStorageQuota(); // 画面表示時に容量をチェック
         ProgressIndicator.initOfflineButton();
         if (isOfflineMode) ProgressIndicator.toggleSubmitButton(true);
-        if (backupRestored) return;
+        if (backupRestored) return context;
         backupRestored = isRestoring = true;
 
         try {
@@ -342,16 +342,17 @@
         setTimeout(saveWithOfflineFiles, 500);
     }, true);
 
-    formBridge.events.on('form.show', () => {
-        if (window.__fb_change_hooked) return;
+    formBridge.events.on('form.show', (ctx) => {
+        if (window.__fb_change_hooked) return ctx;
         window.__fb_change_hooked = true;
         formBridge.fn.getFieldSettings().forEach(s => {
-            ['form.field.change.', 'form.kviewerLookup.selectRecord.'].forEach(ev => formBridge.events.on(ev + s.code, saveWithOfflineFiles));
+            ['form.field.change.', 'form.kviewerLookup.selectRecord.'].forEach(ev => formBridge.events.on(ev + s.code, (ctx2) => { saveWithOfflineFiles(); return ctx2; }));
             if (s.type === 'SUBTABLE') {
-                ['form.subtable.addRow.', 'form.subtable.removeRow.'].forEach(ev => formBridge.events.on(ev + s.code, saveWithOfflineFiles));
-                s.tableFields?.forEach(ts => ['form.field.change.', 'form.kviewerLookup.selectRecord.'].forEach(ev => formBridge.events.on(ev + `${s.code}.${ts.code}`, saveWithOfflineFiles)));
+                ['form.subtable.addRow.', 'form.subtable.removeRow.'].forEach(ev => formBridge.events.on(ev + s.code, (ctx2) => { saveWithOfflineFiles(); return ctx2; }));
+                s.tableFields?.forEach(ts => ['form.field.change.', 'form.kviewerLookup.selectRecord.'].forEach(ev => formBridge.events.on(ev + `${s.code}.${ts.code}`, (ctx2) => { saveWithOfflineFiles(); return ctx2; })));
             }
         });
+        return ctx;
     });
 
     setInterval(() => {
