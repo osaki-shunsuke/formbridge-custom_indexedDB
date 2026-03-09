@@ -388,9 +388,9 @@
     ['form.submit', 'confirm.submit'].forEach(ev => formBridge.events.on(ev, handleSubmit));
     
     // ▼ 送信が完全に終わったらバックアップデータを削除
-    ['form.submitted', 'confirm.submitted'].forEach(ev => formBridge.events.on(ev, async (ctx) => {
-        await dbOp.clear();
-        return ctx; // submittedイベントは非同期ですが、確実にcontextを返す構成にします
+    ['form.submitted', 'confirm.submitted'].forEach(ev => formBridge.events.on(ev, (ctx) => {
+        dbOp.clear(); // 非同期処理ですが、完了を待たずに裏で削除を開始させておきます
+        return ctx;   // 確実にオブジェクト(非Promise)としてcontextを返します
     }));
 
 })();
